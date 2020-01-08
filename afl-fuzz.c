@@ -97,7 +97,8 @@ EXP_ST u8 *in_dir,                    /* Input directory with test cases  */
           *in_bitmap,                 /* Input bitmap                     */
           *doc_path,                  /* Path to documentation dir        */
           *target_path,               /* Path to target binary            */
-          *orig_cmdline;              /* Original command line            */
+          *orig_cmdline,              /* Original command line            */
+          *func_file;
 
 EXP_ST u32 exec_tmout = EXEC_TIMEOUT; /* Configurable exec timeout (ms)   */
 static u32 hang_tmout = EXEC_TIMEOUT; /* Timeout used for hang det (ms)   */
@@ -286,6 +287,14 @@ static u32 a_extras_cnt;              /* Total number of tokens available */
 
 static u8* (*post_handler)(u8* buf, u32* len);
 
+struct func {
+  unsigned int * branch_ids;
+  unsigned int num_branch;
+  char name[100];
+}; 
+
+static struct func ** func_list;
+static u32 bid_func_map[MAP_SIZE];
 
 /* @RB@ Things about branches */
 
@@ -769,6 +778,57 @@ static u8* DMS(u64 val) {
   strcpy(tmp[cur], "infty");
   return tmp[cur];
 
+}
+
+void read_func_file(void){
+  FILE * funcf = fopen(func_file, "r");
+  if (funcf == NULL) FATAL("Can't open given function info file");
+  char func_name[100];
+  u32 num_branch = 0;
+  u32 func_idx = 0;
+  u32 branch_idx = 0;
+  u32 num_func = 0;
+  u8 func_flag = 1;
+  if (fscanf(funcf, "%u\n", &num_func) != 1)
+    FATAL("Wrong FuncInfo file format, can't get # of func. in first line.");
+  u32 idx;
+  memset(bid_func_map, 255, sizeof(u32) * MAP_SIZE);
+  func_list = (struct func **) malloc (sizeof(struct func *) * num_func);
+  if (func_list == NULL) FATAL("malloc failed");
+  while(!feof(funcf)){
+    if (func_flag){
+      if(func_idx >= num_func) break;
+      if(fscanf(funcf, "%u:%s\n", &num_branch, func_name) !=2)
+        FATAL("Wrong FuncInfo file format, can't get func name and # of branch");
+      func_list[func_idx] = (struct func *) malloc (sizeof (struct func));
+      if (func_list[func_idx] == NULL) FATAL("malloc failed");
+      strncpy(func_list[func_idx] -> name, func_name, 99);
+      func_list[func_idx] -> branch_ids = (unsigned int *) malloc (sizeof(unsigned int) * num_branch);
+      if (func_list[func_idx] -> branch_ids == NULL) FATAL("malloc failed");
+      func_list[func_idx] -> num_branch = num_branch;
+      func_idx ++;
+      func_flag = 0;
+      branch_idx = 0;
+    } else {
+      u32 cur_bid;
+      if(fscanf(funcf, "%u\n", &cur_bid) != 1)
+        FATAL("Wrong FuncInfo file format, can't get cur branch id");
+      func_list[func_idx-1] -> branch_ids[branch_idx] = cur_bid;
+      branch_idx ++;
+      if (branch_idx >= num_branch){func_flag = 1;}  
+    }
+  } 
+
+  //debug
+  u32 idx2; 
+  for (idx = 0; idx < num_func; idx ++){
+    struct func * cur_func = func_list[idx];
+    printf("cur func : %s\n", cur_func->name);
+    for (idx2 =0; idx2 < cur_func->num_branch ; idx2 ++){
+      printf("%u, ", cur_func->branch_ids[idx2]);
+    }
+    printf("\n");
+  }
 }
 
 
@@ -8709,7 +8769,7 @@ int main(int argc, char** argv) {
   gettimeofday(&tv, &tz);
   srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
 
-  while ((opt = getopt(argc, argv, "+bq:rsi:o:f:m:t:T:dnCB:S:M:x:Q")) > 0)
+  while ((opt = getopt(argc, argv, "+bq:rsi:o:f:m:t:F:T:dnCB:S:M:x:Q")) > 0)
 
     switch (opt) {
 
@@ -8893,6 +8953,11 @@ int main(int argc, char** argv) {
 
         break;
 
+      case 'F': //FuncInfo file
+        if (func_file) FATAL("Multiple -F options not supported");
+        func_file = optarg;
+        break;
+
       default:
 
         usage(argv[0]);
@@ -8962,6 +9027,8 @@ int main(int argc, char** argv) {
     vanilla_afl = 0;
     init_hit_bits();
   }
+
+  if (func_file)  read_func_file(); 
 
   setup_dirs_fds();
   read_testcases();

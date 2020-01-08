@@ -1,0 +1,4 @@
+786cbc61ed4f6fd7600258ad1daddf2b  /home/cheong/vuzzer64/fuzzer-code/datatemp/mp3/f1.mp3
+498d56d319b27b29df733a0afb769a60  /home/cheong/vuzzer64/fuzzer-code/datatemp/mp3/f2.mp3
+961a08cfc252c3d314b691bf01f7807d  /home/cheong/vuzzer64/fuzzer-code/datatemp/mp3/f3.mp3
+e6d7cbbcdb64e86726d808054cb5fa03  /home/cheong/vuzzer64/fuzzer-code/datatemp/mp3/f4.mp3

@@ -31,12 +31,19 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include <iostream>
+#include <fstream>
+#include <string>
+
 #include "llvm/ADT/Statistic.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
+
+
+#include "llvm/IR/CFG.h"
 
 using namespace llvm;
 
@@ -104,39 +111,41 @@ bool AFLCoverage::runOnModule(Module &M) {
       M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_prev_loc",
       0, GlobalVariable::GeneralDynamicTLSModel, 0, false);
 
+  std::ofstream func;
+  func.open("FuncInfo.txt", std::ofstream::out | std::ofstream::trunc);
+  std::map<const Instruction*, unsigned int> block_afl_map;
+
   /* Instrument all the things! */
-
   int inst_blocks = 0;
+  int func_num = 0;
 
-  for (auto &F : M)
+  for (auto &F : M){
+    int bb_num = 0;
     for (auto &BB : F) {
-
       BasicBlock::iterator IP = BB.getFirstInsertionPt();
       IRBuilder<> IRB(&(*IP));
 
       if (AFL_R(100) >= inst_ratio) continue;
+      bb_num ++;
 
       /* Make up cur_loc */
-
       unsigned int cur_loc = AFL_R(MAP_SIZE);
+      block_afl_map.insert(std::make_pair(BB.getTerminator(), cur_loc));  //hack to get BB's id
 
       ConstantInt *CurLoc = ConstantInt::get(Int32Ty, cur_loc);
 
       /* Load prev_loc */
-
       LoadInst *PrevLoc = IRB.CreateLoad(AFLPrevLoc);
       PrevLoc->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
       Value *PrevLocCasted = IRB.CreateZExt(PrevLoc, IRB.getInt32Ty());
 
       /* Load SHM pointer */
-
       LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
       MapPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
       Value *MapPtrIdx =
           IRB.CreateGEP(MapPtr, IRB.CreateXor(PrevLocCasted, CurLoc));
 
       /* Update bitmap */
-
       LoadInst *Counter = IRB.CreateLoad(MapPtrIdx);
       Counter->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
       Value *Incr = IRB.CreateAdd(Counter, ConstantInt::get(Int8Ty, 1));
@@ -144,14 +153,35 @@ bool AFLCoverage::runOnModule(Module &M) {
           ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
 
       /* Set prev_loc to cur_loc >> 1 */
-
       StoreInst *Store =
           IRB.CreateStore(ConstantInt::get(Int32Ty, cur_loc >> 1), AFLPrevLoc);
       Store->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
 
       inst_blocks++;
-
     }
+    if (bb_num >= 2) {func_num++;}
+  }
+
+  func << func_num << "\n";
+
+  for (auto &F : M) {
+    std::vector<unsigned int> ids;
+    for (auto &BB : F) {
+      unsigned int cur_loc = block_afl_map.find(BB.getTerminator()) -> second;
+      for (succ_iterator succs = succ_begin(&BB); succs != succ_end(&BB); ++succs){
+        unsigned int next_loc = block_afl_map.find(succs->getTerminator()) -> second;
+        unsigned int branch_id = (next_loc >> 1) ^ cur_loc;
+        ids.push_back(branch_id);
+      } 
+    }
+    if (ids.size() > 0){
+      func << ids.size() << ":" <<  F.getName().str() << "\n";
+      for (auto id= ids.begin(); id!=ids.end(); ++id){
+        func << *id << "\n";
+      }
+    } 
+  }
+  func.close();
 
   /* Say something nice. */
 
