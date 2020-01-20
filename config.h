@@ -23,6 +23,11 @@
 
 #define VERSION             "2.52b"
 
+
+
+#define REL_FUNC_THRESHOLD 0.97
+#define MASK_THRESHOLD 0.97
+
 /******************************************************
  *                                                    *
  *  Settings that may be of interest to power users:  *
@@ -77,6 +82,7 @@
 /* Baseline number of random tweaks during a single 'havoc' stage: */
 
 #define HAVOC_CYCLES        256
+#define HAVOC_CYCLES_REL    256
 #define HAVOC_CYCLES_INIT   1024
 
 /* Maximum multiplier for the above (should be a power of two, beware
@@ -313,7 +319,7 @@
    problems with complex programs). You need to recompile the target binary
    after changing this - otherwise, SEGVs may ensue. */
 
-#define MAP_SIZE_POW2       16
+#define MAP_SIZE_POW2       18
 #define MAP_SIZE            (1 << MAP_SIZE_POW2)
 
 /* Maximum allocator request size (keep well under INT_MAX): */

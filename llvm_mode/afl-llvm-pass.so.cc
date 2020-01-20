@@ -34,6 +34,7 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <set>
 
 #include "llvm/ADT/Statistic.h"
 #include "llvm/IR/IRBuilder.h"
@@ -112,25 +113,33 @@ bool AFLCoverage::runOnModule(Module &M) {
       0, GlobalVariable::GeneralDynamicTLSModel, 0, false);
 
   std::ofstream func;
-  func.open("FuncInfo.txt", std::ofstream::out | std::ofstream::trunc);
-  std::map<const Instruction*, unsigned int> block_afl_map;
+  func.open("FuncInfo.txt", std::ofstream::out | std::ofstream::app);
+  std::map<BasicBlock *, unsigned int> block_afl_map;
+  std::vector<BasicBlock *> entryblocks;
+  unsigned int total_bb_num = 0;
 
   /* Instrument all the things! */
   int inst_blocks = 0;
   int func_num = 0;
-
+  std::cout << "Funcinfo functions : \n";
   for (auto &F : M){
     int bb_num = 0;
-    for (auto &BB : F) {
-      BasicBlock::iterator IP = BB.getFirstInsertionPt();
+    std::cout << F.getName().str() << " ";
+    if (!F.empty()){
+      entryblocks.push_back(&F.getEntryBlock());
+    }
+    //std::cout << "entry block : " << &F.getEntryBlock() << "\n";
+    for (auto BB = F.begin() ; BB != F.end() ; BB++) {
+      BasicBlock::iterator IP = (*BB).getFirstInsertionPt();
       IRBuilder<> IRB(&(*IP));
 
       if (AFL_R(100) >= inst_ratio) continue;
       bb_num ++;
+      total_bb_num ++;
 
       /* Make up cur_loc */
       unsigned int cur_loc = AFL_R(MAP_SIZE);
-      block_afl_map.insert(std::make_pair(BB.getTerminator(), cur_loc));  //hack to get BB's id
+      block_afl_map.insert(std::make_pair(&(*BB), cur_loc));  //hack to get BB's id
 
       ConstantInt *CurLoc = ConstantInt::get(Int32Ty, cur_loc);
 
@@ -159,27 +168,56 @@ bool AFLCoverage::runOnModule(Module &M) {
 
       inst_blocks++;
     }
-    if (bb_num >= 2) {func_num++;}
+    std::cout << "BB num : " << bb_num << "\n";
+    if (bb_num >= 1) {func_num++;}
   }
 
-  func << func_num << "\n";
+  //func << func_num << "\n";
 
   for (auto &F : M) {
-    std::vector<unsigned int> ids;
+    std::set<unsigned int> ids;
     for (auto &BB : F) {
-      unsigned int cur_loc = block_afl_map.find(BB.getTerminator()) -> second;
-      for (succ_iterator succs = succ_begin(&BB); succs != succ_end(&BB); ++succs){
-        unsigned int next_loc = block_afl_map.find(succs->getTerminator()) -> second;
-        unsigned int branch_id = (next_loc >> 1) ^ cur_loc;
-        ids.push_back(branch_id);
-      } 
+      unsigned int cur_loc = block_afl_map.find(&BB) -> second;
+      for (succ_iterator succs = succ_begin(&BB); succs != succ_end(&BB); succs++){
+        unsigned int next_loc = block_afl_map.find(*succs) -> second;
+        unsigned int branch_id = (cur_loc >> 1) ^ next_loc;
+        ids.insert(branch_id);
+      }
+      TerminatorInst * BBt = BB.getTerminator();
+      if (BBt->getNumSuccessors() == 0){
+        if (BBt->isExceptional()){
+        } else if (isa<ReturnInst>(BBt)){
+          for(auto eB = entryblocks.begin(); eB != entryblocks.end(); eB++){
+            auto search = block_afl_map.find(*eB);
+            unsigned int next_loc = 0;
+            if (search == block_afl_map.end()){
+              std::cout << "can't find in block afl map\n";
+              continue;
+            } else {
+              next_loc = block_afl_map.find(*eB) -> second;
+            }
+            if (next_loc > (1 << 16)){
+              std::cout << "next_loc over 2^ 16\n";
+            }
+            unsigned int branch_id = (cur_loc >> 1) ^ next_loc;
+            ids.insert(branch_id);
+          }
+        } else if (isa<IndirectBrInst>(BBt)) {
+          std::cout << "indirect branch : no successor \n";
+        } else if (isa<UnreachableInst> (BBt)) {
+          std::cout << "unreachable : no successor\n";
+        } else {
+          std::cout << "Warning : no successor?\n";
+        }
+      }
     }
     if (ids.size() > 0){
       func << ids.size() << ":" <<  F.getName().str() << "\n";
-      for (auto id= ids.begin(); id!=ids.end(); ++id){
+      for (auto id= ids.begin(); id!=ids.end(); id++){
         func << *id << "\n";
+        std::cout << *id << "\n";
       }
-    } 
+    }
   }
   func.close();
 

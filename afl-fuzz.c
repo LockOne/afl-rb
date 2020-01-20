@@ -294,7 +294,23 @@ struct func {
 }; 
 
 static struct func ** func_list;
-static u32 bid_func_map[MAP_SIZE];
+static u32 ** func_exec_table;
+static u8 * func_exec_list;
+static double * func_rel_table;
+static u32 num_func;
+static u8 num_target_func = 0;
+static u32 num_rel_func;
+static u32 num_rel_branch;
+static u32* bid_func_map[MAP_SIZE];  //store maximum 10 function idx, +1 on idx to avoid 0
+static u8  rel_branch_map[MAP_SIZE];
+static u32 target_func = -1;
+static u32 mask_size;
+static u32 cur_len;
+static FILE * mask_size_file;
+static FILE * rel_func_file;
+static u32 hit_count = 0;
+static u32 func_list_size = 0;
+static double rel_threshold = 0.5;
 
 /* @RB@ Things about branches */
 
@@ -780,24 +796,26 @@ static u8* DMS(u64 val) {
 
 }
 
-void read_func_file(void){
-  FILE * funcf = fopen(func_file, "r");
+void read_func_file(u8 * input_file){
+  FILE * funcf = fopen(input_file, "r");
   if (funcf == NULL) FATAL("Can't open given function info file");
   char func_name[100];
   u32 num_branch = 0;
-  u32 func_idx = 0;
+  u32 func_idx = num_func;
   u32 branch_idx = 0;
-  u32 num_func = 0;
   u8 func_flag = 1;
-  if (fscanf(funcf, "%u\n", &num_func) != 1)
-    FATAL("Wrong FuncInfo file format, can't get # of func. in first line.");
-  u32 idx;
-  memset(bid_func_map, 255, sizeof(u32) * MAP_SIZE);
-  func_list = (struct func **) malloc (sizeof(struct func *) * num_func);
+  u8 idx = 0;
+  if (func_list == NULL){
+    func_list = (struct func **) malloc (sizeof(struct func *) * 100);
+    func_list_size += 100;
+  }  
   if (func_list == NULL) FATAL("malloc failed");
   while(!feof(funcf)){
     if (func_flag){
-      if(func_idx >= num_func) break;
+      if (func_idx >= func_list_size){
+        func_list = (struct func **) realloc (func_list, sizeof(struct func*) * (100 + func_list_size));
+        func_list_size += 100;
+      }
       if(fscanf(funcf, "%u:%s\n", &num_branch, func_name) !=2)
         FATAL("Wrong FuncInfo file format, can't get func name and # of branch");
       func_list[func_idx] = (struct func *) malloc (sizeof (struct func));
@@ -814,21 +832,17 @@ void read_func_file(void){
       if(fscanf(funcf, "%u\n", &cur_bid) != 1)
         FATAL("Wrong FuncInfo file format, can't get cur branch id");
       func_list[func_idx-1] -> branch_ids[branch_idx] = cur_bid;
+      for (idx = 0; idx < 10; idx ++){
+        if (bid_func_map[cur_bid][idx] == 0) {
+          bid_func_map[cur_bid][idx] = func_idx;
+          break;
+        } 
+      }
       branch_idx ++;
       if (branch_idx >= num_branch){func_flag = 1;}  
     }
-  } 
-
-  //debug
-  u32 idx2; 
-  for (idx = 0; idx < num_func; idx ++){
-    struct func * cur_func = func_list[idx];
-    printf("cur func : %s\n", cur_func->name);
-    for (idx2 =0; idx2 < cur_func->num_branch ; idx2 ++){
-      printf("%u, ", cur_func->branch_ids[idx2]);
-    }
-    printf("\n");
   }
+  num_func = func_idx;
 }
 
 
@@ -991,7 +1005,20 @@ static int* get_lowest_hit_branch_ids(){
 /* return 0 if current trace bits hits branch with id branch_id,
   0 otherwise */
 static int hits_branch(int branch_id){
-  return (trace_bits[branch_id] != 0);
+  if (target_func == -1){
+    return (trace_bits[branch_id] != 0);
+  } 
+  u32 idx;
+  hit_count = 0;
+  for (idx = 0; idx < MAP_SIZE ; idx++){
+    if(unlikely(trace_bits[idx])){
+     if(rel_branch_map[idx]){
+        hit_count ++;
+      }
+    }
+  }
+  //return (queue_cur->bitmap_size * rel_threshold < hit_count);
+  return ( ((double) hit_count / queue_cur->bitmap_size) > ((double) num_rel_branch / MAP_SIZE));
 }
 
 // checks if hits a rare branch with mini trace bits
@@ -1005,10 +1032,9 @@ static u32 * is_rb_hit_mini(u8* trace_bits_mini){
   int min_hit_index = 0;
 
   for (int i = 0; i < MAP_SIZE ; i ++){
-;
-      if (unlikely (trace_bits_mini[i >> 3]  & (1 <<(i & 7)) )){
+      if (unlikely (trace_bits_mini[i >> 3]  & (1 <<(i & 7)) )){  //Is this tc execute this branch?
         int cur_index = i;
-        int is_rare = contains_id(cur_index, rarest_branches);
+        int is_rare = contains_id(cur_index, rarest_branches);  //Is this branch rare?
         if (is_rare) {
           // at loop initialization, set min_branch_hit properly
           if (!min_hit_index) {
@@ -1040,7 +1066,6 @@ static u32 * is_rb_hit_mini(u8* trace_bits_mini){
           min_hit_index++;
         }
       }
-
   }
   ck_free(branch_cts);
   ck_free(rarest_branches);
@@ -1163,11 +1188,15 @@ static void minimize_bits(u8* dst, u8* src) {
 
 }
 
+
+static u32 count_bytes(u8* mem);
+
 /* Append new test case to the queue. */
 
 static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
 
   struct queue_entry* q = ck_alloc(sizeof(struct queue_entry));
+  u32 i,j;
 
   // @RB@ added these for every queue entry
   q->trace_mini = ck_alloc(MAP_SIZE >> 3);
@@ -1203,6 +1232,27 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
 
   last_path_time = get_cur_time();
 
+  if (func_exec_table){
+    for (i = 0; i < num_func ; i ++){
+      func_exec_list[i] = 0;
+    }
+    for (i = 0; i < MAP_SIZE ; i ++){
+      if (unlikely(q->trace_mini[i >> 3] & (1 << (i & 7)))){
+        for (j = 0 ; j < 10; j ++){
+          if (bid_func_map[i][j] != 0){
+            func_exec_list[bid_func_map[i][j] - 1] = 1;
+          } else break;
+        }
+      }
+    }
+    for (i = 0; i < num_func ; i++){
+      for(j = 0; j < num_func; j++){
+        if(func_exec_list[i] & func_exec_list[j]){
+          func_exec_table[i][j] += 1;
+        }
+      }
+    }
+  }
 }
 
 
@@ -4517,6 +4567,37 @@ static void show_stats(void) {
   SAYF("    map density : %s%-21s " bSTG bV "\n", t_byte_ratio > 70 ? cLRD : 
        ((t_bytes < 200 && !dumb_mode) ? cPIN : cRST), tmp);
 
+  if (rb_fuzzing == 0){
+    sprintf(tmp, "None");
+    SAYF(bV bSTOP "  target branch  : " cRST "%-17s " bSTG bV bSTOP, tmp);
+  } else {
+    sprintf(tmp, "%u", rb_fuzzing - 1);
+    SAYF(bV bSTOP "  target branch  : " cRST "%-17s " bSTG bV bSTOP, tmp);
+  }
+
+  sprintf(tmp, "%0.1f/%u", (double) mask_size / 3.0 ,cur_len);
+  SAYF(" mask size (len): " cRST "%-21s " bSTG bV "\n", tmp);
+
+  if (target_func != -1) {
+     sprintf(tmp, "%u", num_target_func);
+     SAYF(bV bSTOP " # of target func : " cRST "%-17s " bSTG bV bSTOP, tmp);
+     sprintf(tmp, "%u", num_rel_func);
+     SAYF("  # of rel func : " cRST "%-21s " bSTG bV "\n", tmp);
+     
+     sprintf(tmp, "%u/%u", hit_count,num_rel_branch);
+     SAYF(bV bSTOP " rel branch hit  : " cRST "%-17s " bSTG bV bSTOP,tmp);
+     sprintf(tmp, "%0.2f", rel_threshold);
+     SAYF("  rel threshold : "  cRST "%-21s " bSTG bV "\n",tmp);
+
+  } else {
+     sprintf(tmp, "None");
+     SAYF(bV bSTOP "  target func    : " cRST "%-17s " bSTG bV bSTOP,tmp);
+     SAYF("                           " bSTG bV "\n");
+  }
+  sprintf(tmp, "%u", queue_cur->bitmap_size);
+  SAYF(bV bSTOP " cur bitmap size : " cRST "%-17s " bSTG bV bSTOP,tmp);
+  SAYF("              "  bSTG bV "\n");
+ 
   sprintf(tmp, "%s (%0.02f%%)", DI(cur_skipped_paths),
           ((double)cur_skipped_paths * 100) / queued_paths);
 
@@ -5037,10 +5118,12 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
 
   if (rb_fuzzing){
     total_branch_tries++;
+  /* unneccessory
     if (hits_branch(rb_fuzzing - 1)){
       successful_branch_tries++;
     } else {
     }
+  */
   }
 
   /* This handles FAULT_ERROR for us: */
@@ -5475,6 +5558,10 @@ static u8 fuzz_one(char** argv) {
   /* RB Vars*/
   u8 * branch_mask = 0;
   u8 * orig_branch_mask = 0;
+  u32 * tmp_branch_mask = 0;
+  u32 max_branch_mask = 0;
+  u32 mid_branch_mask = 0;
+  u32 min_branch_mask = 0;
   u8 rb_skip_deterministic = 0;
   u8 skip_simple_bitflip = 0;
   u8 * virgin_virgin_bits = 0;
@@ -5483,6 +5570,7 @@ static u8 fuzz_one(char** argv) {
   u32 orig_queued_with_cov = queued_with_cov;
   u32 orig_queued_discovered = queued_discovered;
   u32 orig_total_execs = total_execs;
+  mask_size = 0;
   
 
   if (!vanilla_afl){
@@ -5555,14 +5643,14 @@ static u8 fuzz_one(char** argv) {
     } else { 
       int ii;
       for (ii = 0; min_branch_hits[ii] != 0; ii++){
-        rb_fuzzing = min_branch_hits[ii];
+        rb_fuzzing = min_branch_hits[ii]; //target
         if (rb_fuzzing){
           int byte_offset = (rb_fuzzing - 1) >> 3;
           int bit_offset = (rb_fuzzing - 1) & 7;
 
           // skip deterministic if we have fuzzed this min branch
           if (queue_cur->fuzzed_branches[byte_offset] & (1 << (bit_offset))){
-            // let's try the next one
+            // let's try the next branch
             continue;
           } else {
             for (int k = 0; k < MAP_SIZE >> 3; k ++){
@@ -5594,24 +5682,60 @@ static u8 fuzz_one(char** argv) {
       }
       ck_free(min_branch_hits);
 
-    if (!skip_simple_bitflip){
-      cycle_wo_new = 0; 
-    }
-    //rarest_branches = get_lowest_hit_branch_ids();
-    //DEBUG1("---\ncurrent rarest branches: ");
-    //for (int k = 0; rarest_branches[k] != -1 ; k++){
-    //  DEBUG1("%i (%u) ", rarest_branches[k], hit_bits[rarest_branches[k]]);
-    //}
-    //DEBUG1("\n");
+      if (!skip_simple_bitflip){
+        cycle_wo_new = 0; 
+      }
+      //rarest_branches = get_lowest_hit_branch_ids();
+      //DEBUG1("---\ncurrent rarest branches: ");
+      //for (int k = 0; rarest_branches[k] != -1 ; k++){
+      //  DEBUG1("%i (%u) ", rarest_branches[k], hit_bits[rarest_branches[k]]);
+      //}
+      //DEBUG1("\n");
 
-    DEBUG1("Trying to fuzz input %s: \n", queue_cur->fname);
-    //for (int k = 0; k < len; k++) DEBUG1("%c", out_buf[k]);
-    //DEBUG1("\n");
+      DEBUG1("Trying to fuzz input %s: \n", queue_cur->fname);
+      //for (int k = 0; k < len; k++) DEBUG1("%c", out_buf[k]);
+      //DEBUG1("\n");
 
 
-    DEBUG1("which hit branch %i (hit by %u inputs) \n", rb_fuzzing -1, hit_bits[rb_fuzzing -1]);
-    //ck_free(rarest_branches);
-   
+      DEBUG1("which hit branch %i (hit by %u inputs) \n", rb_fuzzing -1, hit_bits[rb_fuzzing -1]);
+      //ck_free(rarest_branches);
+
+      //get related branches
+      if (func_file && rb_fuzzing) {
+        stage_name  = "get rel branches";
+        stage_short = "get_rel";
+        stage_max   = 1;
+        stage_cur = 1;
+        show_stats();
+        u32 * target_funcs = bid_func_map[rb_fuzzing - 1];
+        //choose random func
+        num_rel_func = 0;
+        num_rel_branch = 0;
+        num_target_func = 0;
+        memset(rel_branch_map, 0, MAP_SIZE);
+        for ( i = 0; i < 10 ; i ++){
+          num_target_func ++;
+          if(target_funcs[i] == 0) break;
+          target_func = target_funcs[i] - 1;
+          if (target_func != -1 && func_exec_table[target_func][target_func]){
+            u32 target_exec = func_exec_table[target_func][target_func];
+            if (target_exec == 0) FATAL("0 execution of target function\n"); 
+            for (i = 0; i < num_func; i ++){
+              double rel = ((double) func_exec_table[target_func][i]) / target_exec;
+              func_rel_table[i] = rel;
+              num_rel_func += (rel >= REL_FUNC_THRESHOLD);
+              if (rel >= REL_FUNC_THRESHOLD){
+                for (j = 0; j < func_list[i]->num_branch; j ++){
+                  rel_branch_map[func_list[i]->branch_ids[j]] = 1;
+                }
+              }
+            }     
+          }
+        }
+        for (i = 0; i < MAP_SIZE; i ++){
+          num_rel_branch += rel_branch_map[i];
+        }
+      }
     }
   }
 
@@ -5628,6 +5752,7 @@ static u8 fuzz_one(char** argv) {
   if (fd < 0) PFATAL("Unable to open '%s'", queue_cur->fname);
 
   len = queue_cur->len;
+  cur_len = len;
 
   orig_in = in_buf = mmap(0, len, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
 
@@ -5765,6 +5890,8 @@ re_run: // re-run when running in shadow mode
       orig_branch_mask = alloc_branch_mask(len + 1);
   } else {
       branch_mask = ck_alloc(len + 1);
+      tmp_branch_mask = ck_alloc(sizeof(u32) * (len+1));
+      memset(tmp_branch_mask,0, sizeof(u32) * (len+1));
       orig_branch_mask = ck_alloc(len + 1);
   }
   // this will be used to store the valid modifiable positions
@@ -5906,12 +6033,12 @@ re_run: // re-run when running in shadow mode
   stage_cycles[STAGE_FLIP1] += stage_max;
 
   /* @RB@ */
-  DEBUG1("%swhile bitflipping, %i of %i tries hit branch %i\n", shadow_prefix, successful_branch_tries, total_branch_tries, rb_fuzzing - 1);
+  //DEBUG1("%swhile bitflipping, %i of %i tries hit branch %i\n", shadow_prefix, successful_branch_tries, total_branch_tries, rb_fuzzing - 1);
 
 
 skip_simple_bitflip:
 
-  successful_branch_tries = 0;
+  //successful_branch_tries = 0;
   total_branch_tries = 0;
 
 
@@ -5947,6 +6074,9 @@ skip_simple_bitflip:
 
   orig_hit_cnt = new_hit_cnt;
 
+  max_branch_mask = 0;
+  min_branch_mask = ~0;
+
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
 
     stage_cur_byte = stage_cur;
@@ -5955,11 +6085,27 @@ skip_simple_bitflip:
 
     if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
-    if (rb_fuzzing && !shadow_mode && use_branch_mask > 0)
-      if (hits_branch(rb_fuzzing - 1)){
-        branch_mask[stage_cur] = 1;
-     }
-
+    if (rb_fuzzing && !shadow_mode && use_branch_mask > 0){
+      if (func_file) {
+      u32 idx;
+      hit_count = 0;
+      for (idx = 0; idx < MAP_SIZE ; idx++){
+        if(unlikely(trace_bits[idx])){
+          if(rel_branch_map[idx]){
+            hit_count ++;
+          }
+        }
+      }
+      tmp_branch_mask[stage_cur] = hit_count;
+      max_branch_mask = (max_branch_mask < hit_count) ? hit_count : max_branch_mask;
+      min_branch_mask = (min_branch_mask > hit_count) ? hit_count : min_branch_mask;
+      } else{
+        if (hits_branch(rb_fuzzing - 1)){
+          branch_mask[stage_cur] = 1;
+          mask_size += 1;
+        }
+      }
+    }
     /* We also use this stage to pull off a simple trick: we identify
        bytes that seem to have no effect on the current execution path
        even when fully flipped - and we skip them during more expensive
@@ -5987,7 +6133,18 @@ skip_simple_bitflip:
     out_buf[stage_cur] ^= 0xFF;
 
   }
-
+  if( func_file){
+    mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
+    for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
+      if (tmp_branch_mask[stage_cur] > mid_branch_mask) {
+        branch_mask[stage_cur] = 1;
+        mask_size ++;
+      } 
+    }
+    max_branch_mask = 0;
+    min_branch_mask = ~0;
+    memset(tmp_branch_mask,0, sizeof(u32) * (len+1));
+  }
   /* If the effector map is more than EFF_MAX_PERC dense, just flag the
      whole thing as worth fuzzing, since we wouldn't be saving much time
      anyway. */
@@ -6019,6 +6176,7 @@ skip_simple_bitflip:
     u8* tmp_buf = ck_alloc(len+1);
 
     // check if we can delete this byte
+    stage_name  = "byte remove 8/8";
     stage_short = "rbrem8";
     for (stage_cur = 0; stage_cur < len; stage_cur++) {
       /* delete current byte */
@@ -6032,12 +6190,42 @@ skip_simple_bitflip:
       if (common_fuzz_stuff(argv, tmp_buf, len - 1)) goto abandon_entry;
 
       /* if even with this byte deleted we hit the branch, can delete here */
-      if (hits_branch(rb_fuzzing - 1)){
-        branch_mask[stage_cur] += 2;
+      if (func_file){
+        u32 idx;
+        hit_count = 0;
+        for (idx = 0; idx < MAP_SIZE ; idx++){
+          if(unlikely(trace_bits[idx])){
+            if(rel_branch_map[idx]){
+              hit_count ++;
+            }
+          }
+        }
+        tmp_branch_mask[stage_cur] = hit_count;
+        max_branch_mask = (max_branch_mask < hit_count) ? hit_count : max_branch_mask;
+        min_branch_mask = (min_branch_mask > hit_count) ? hit_count : min_branch_mask;
+      } else {
+        if (hits_branch(rb_fuzzing - 1)){
+          branch_mask[stage_cur] += 2;
+          mask_size ++;
+        }
       }
     }
 
-    // check if we can add at this byte
+    if (func_file){
+      mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
+      for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
+        if (tmp_branch_mask[stage_cur] > mid_branch_mask) {
+          branch_mask[stage_cur] += 2;
+          mask_size ++;
+        } 
+      }
+      max_branch_mask = 0;
+      min_branch_mask = ~0;
+      memset(tmp_branch_mask,0, sizeof(u32) * (len+1));
+    }
+    
+   // check if we can add at this byte
+    stage_name  = "byte add 8/8";
     stage_short = "rbadd8";
     for (stage_cur = 0; stage_cur <= len; stage_cur++) {
       /* add random byte */
@@ -6051,10 +6239,36 @@ skip_simple_bitflip:
       if (common_fuzz_stuff(argv, tmp_buf, len + 1)) goto abandon_entry;
 
       /* if adding before still hit branch, can add */
-      if (hits_branch(rb_fuzzing - 1)){
-        branch_mask[stage_cur] += 4;
+      if (func_file){
+        u32 idx;
+        hit_count = 0;
+        for (idx = 0; idx < MAP_SIZE ; idx++){
+          if(unlikely(trace_bits[idx])){
+            if(rel_branch_map[idx]){
+              hit_count ++;
+            }
+          }
+        }
+        tmp_branch_mask[stage_cur] = hit_count;
+        max_branch_mask = (max_branch_mask < hit_count) ? hit_count : max_branch_mask;
+        min_branch_mask = (min_branch_mask > hit_count) ? hit_count : min_branch_mask;
+      } else {
+        if (hits_branch(rb_fuzzing - 1)){
+          branch_mask[stage_cur] += 4;
+          mask_size ++;
+        }
       }
+    }
 
+    if (func_file){
+      mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
+      for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
+        if (tmp_branch_mask[stage_cur] > mid_branch_mask) {
+          branch_mask[stage_cur] += 4;
+          mask_size ++;
+        } 
+      } 
+      ck_free(tmp_branch_mask);
     }
 
     ck_free(tmp_buf);
@@ -6062,7 +6276,9 @@ skip_simple_bitflip:
     memcpy (orig_branch_mask, branch_mask, len + 1);
   }
 
-  if (rb_fuzzing && (successful_branch_tries == 0)){
+  fprintf(mask_size_file, "%0.1f/%u\n",(double) mask_size/ 3.0, cur_len);
+
+  if (rb_fuzzing && (mask_size == 0)){
     if (blacklist_pos >= blacklist_size -1){
       DEBUG1("Increasing size of blacklist from %d to %d\n", blacklist_size, blacklist_size*2);
       blacklist_size = 2 * blacklist_size; 
@@ -6076,10 +6292,10 @@ skip_simple_bitflip:
     DEBUG1("adding branch %i to blacklist\n", rb_fuzzing-1);
   }
   /* @RB@ reset stats for debugging*/
-  DEBUG1("%swhile calibrating, %i of %i tries hit branch %i\n", shadow_prefix, successful_branch_tries, total_branch_tries, rb_fuzzing - 1);
+  //DEBUG1("%swhile calibrating, %i of %i tries hit branch %i\n", shadow_prefix, successful_branch_tries, total_branch_tries, rb_fuzzing - 1);
   DEBUG1("%scalib stage: %i new coverage in %i total execs\n", shadow_prefix, queued_discovered-orig_queued_discovered, total_execs-orig_total_execs);
-  DEBUG1("%scalib stage: %i new branches in %i total execs\n", shadow_prefix, queued_with_cov-orig_queued_with_cov, total_execs-orig_total_execs);
-  successful_branch_tries = 0;
+  //DEBUG1("%scalib stage: %i new branches in %i total execs\n", shadow_prefix, queued_with_cov-orig_queued_with_cov, total_execs-orig_total_execs);
+  //successful_branch_tries = 0;
   total_branch_tries = 0;
 
   // @RB@ TODO: skip to havoc (or dictionary add?) if can't modify any bytes 
@@ -6980,11 +7196,11 @@ skip_extras:
   if (!queue_cur->passed_det) mark_as_det_done(queue_cur);
 
   /* @RB@ reset stats for debugging*/
-  DEBUG1("%sIn deterministic stage, %i of %i tries hit branch %i\n", shadow_prefix, successful_branch_tries, total_branch_tries, rb_fuzzing - 1);
+  //DEBUG1("%sIn deterministic stage, %i of %i tries hit branch %i\n", shadow_prefix, successful_branch_tries, total_branch_tries, rb_fuzzing - 1);
   DEBUG1("%sdet stage: %i new coverage in %i total execs\n", shadow_prefix, queued_discovered-orig_queued_discovered, total_execs-orig_total_execs);
   DEBUG1("%sdet stage: %i new branches in %i total execs\n", shadow_prefix, queued_with_cov-orig_queued_with_cov, total_execs-orig_total_execs);
 
-  successful_branch_tries = 0;
+  //successful_branch_tries = 0;
   total_branch_tries = 0;
 
   /****************
@@ -7002,7 +7218,7 @@ havoc_stage:
 
     stage_name  = "havoc";
     stage_short = "havoc";
-    stage_max   = (doing_det ? HAVOC_CYCLES_INIT : HAVOC_CYCLES) *
+    stage_max   = (doing_det ? HAVOC_CYCLES_INIT : (func_file ? HAVOC_CYCLES_REL : HAVOC_CYCLES)) *
                   perf_score / havoc_div / 100;
 
   } else {
@@ -7624,8 +7840,8 @@ abandon_entry:
   }
 
   /* @RB@ reset stats for debugging*/
-  DEBUG1("%sIn havoc stage, %i of %i tries hit branch %i\n", shadow_prefix, successful_branch_tries, total_branch_tries, rb_fuzzing - 1);
-  successful_branch_tries = 0;
+  //DEBUG1("%sIn havoc stage, %i of %i tries hit branch %i\n", shadow_prefix, successful_branch_tries, total_branch_tries, rb_fuzzing - 1);
+  //successful_branch_tries = 0;
   total_branch_tries = 0;
   DEBUG1("%shavoc stage: %i new coverage in %i total execs\n", shadow_prefix, queued_discovered-orig_queued_discovered, total_execs-orig_total_execs);
   DEBUG1("%shavoc stage: %i new branches in %i total execs\n", shadow_prefix, queued_with_cov-orig_queued_with_cov, total_execs-orig_total_execs);
@@ -8239,7 +8455,13 @@ EXP_ST void setup_dirs_fds(void) {
                      "pending_total, pending_favs, map_size, unique_crashes, "
                      "unique_hangs, max_depth, execs_per_sec\n");
                      /* ignore errors */
+  tmp = alloc_printf("%s/mask_size.log", out_dir);
+  fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  if (fd < 0) PFATAL("Unable to create '%s'", tmp);
+  ck_free(tmp);
 
+  mask_size_file = fdopen(fd, "w");
+  if (!mask_size_file) PFATAL("fdopen() failed");
 }
 
 
@@ -9028,12 +9250,46 @@ int main(int argc, char** argv) {
     init_hit_bits();
   }
 
-  if (func_file)  read_func_file(); 
+  if (func_file) {
+    num_func = 0;
+    u32 idx,idx2; 
+    for (idx = 0; idx < MAP_SIZE; idx++){
+      bid_func_map[idx] = (u32 *) malloc(sizeof(u32) * 10);
+      memset(bid_func_map[idx],0, sizeof(u32) * 10);
+    }
+    u8 * ptr = strtok(func_file, ",");
+    while(ptr != NULL){
+      read_func_file(ptr); 
+      ptr = strtok(NULL, ",");
+    }
+    //debug
+    /*
+    for (idx = 0; idx < num_func; idx ++){
+      struct func * cur_func = func_list[idx];
+      printf("cur func : %s\n", cur_func->name);
+      for (idx2 =0; idx2 < cur_func->num_branch ; idx2 ++){
+        printf("%u, ", cur_func->branch_ids[idx2]);
+      }
+      printf("\n");
+    }
+    */
+    func_exec_table = (u32 **) malloc (sizeof(u32*) * num_func + sizeof(u32) * num_func * num_func);
+    if (func_exec_table == NULL) FATAL("malloc failed");
+    memset(func_exec_table, 0, sizeof(u32*) * num_func + sizeof(u32) * num_func * num_func);
+    func_exec_list = (u8 *) malloc(sizeof (u8) * num_func);
+    if (func_exec_list == NULL) FATAL("malloc failed");
+    func_rel_table = (double *) malloc(sizeof (double) * num_func);
+    if (func_rel_table == NULL) FATAL("malloc failed");
+    u32 * ptr2 = (u32 *) (func_exec_table + num_func);
+    for (idx = 0; idx < num_func ; idx++){
+      func_exec_table[idx] = ptr2 + num_func * idx;
+    }
+  }
 
   setup_dirs_fds();
   read_testcases();
   load_auto();
-
+  
   pivot_inputs();
 
   if (extras_dir) load_extras(extras_dir);
@@ -9122,7 +9378,26 @@ int main(int argc, char** argv) {
         sync_fuzzers(use_argv);
 
     }
-
+/*
+    if(func_file){
+      u8 * fn = alloc_printf("%s/rel_func.csv", out_dir);
+      rel_func_file = fopen(fn, "w");
+      ck_free(fn); 
+      u32 idx1,idx2;
+      for (idx1 = 0; idx1 < num_func; idx1++){
+        fprintf(rel_func_file,",%s",func_list[idx1]->name);
+      }
+      fprintf(rel_func_file,"\n");
+      for (idx1 = 0; idx1 < num_func; idx1++){
+        fprintf(rel_func_file,"%s,", func_list[idx1]->name);
+        for (idx2 = 0; idx2 < num_func; idx2++){
+          fprintf(rel_func_file, "%u,",func_exec_table[idx1][idx2]);
+        }
+        fprintf(rel_func_file,"\n");
+      }
+      fclose(rel_func_file);
+    }
+*/
     skipped_fuzz = fuzz_one(use_argv);
 
     if (!stop_soon && sync_id && !skipped_fuzz) {
@@ -9161,9 +9436,33 @@ stop_fuzzing:
            "    (For info on resuming, see %s/README.)\n", doc_path);
 
   }
+  if (func_file){
+    if (func_list){
+      u32 idx1;
+      for (idx1 = 0; idx1 < num_func; idx1++){
+        free(func_list[idx1] -> branch_ids);
+        free(func_list[idx1]);
+      }
+      free(func_list);
+    }
+  }
+  if (func_exec_table) free(func_exec_table);
+
+  u8 * fnn = alloc_printf("%s/branch_map.log", out_dir);
+  FILE * fnnn = NULL;
+  fnnn = fopen(fnn, "w");
+  ck_free(fnn);
+  unsigned idx1 = 0;
+  for (idx1=0; idx1< MAP_SIZE; idx1++){
+    if (hit_bits[idx1] != 0){
+      fprintf(fnnn, "%u\n", idx1);
+    }
+  }
+  fclose(fnnn);
 
   dump_to_logs();
   fclose(plot_file);
+  fclose(mask_size_file);
   ck_free(blacklist);
   destroy_queue();
   destroy_extras();
