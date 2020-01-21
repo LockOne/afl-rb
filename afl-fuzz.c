@@ -289,14 +289,16 @@ static u8* (*post_handler)(u8* buf, u32* len);
 
 struct func {
   unsigned int * branch_ids;
+  unsigned int * rel_funcs;
   unsigned int num_branch;
+  unsigned int num_rel_funcs;
   char name[100];
 }; 
 
 static struct func ** func_list;
-static u32 ** func_exec_table;
-static u8 * func_exec_list;
-static double * func_rel_table;
+//static u32 ** func_exec_table;
+//static u8 * func_exec_list;
+//static double * func_rel_table;
 static u32 num_func;
 static u8 num_target_func = 0;
 static u32 num_rel_func;
@@ -801,45 +803,79 @@ void read_func_file(u8 * input_file){
   if (funcf == NULL) FATAL("Can't open given function info file");
   char func_name[100];
   u32 num_branch = 0;
+  u32 num_rel_funcs = 0;
   u32 func_idx = num_func;
-  u32 branch_idx = 0;
-  u8 func_flag = 1;
+  u32 bf_idx = 0;
+  u32 cur_fid;
+  u32 cur_bid;
+  u8 read_flag = 0; // 0 : func, 1 : rel func, 2 : branch func, 3 : branch id
   u8 idx = 0;
+  u32 linenum  = 0;
   if (func_list == NULL){
     func_list = (struct func **) malloc (sizeof(struct func *) * 100);
     func_list_size += 100;
   }  
   if (func_list == NULL) FATAL("malloc failed");
   while(!feof(funcf)){
-    if (func_flag){
-      if (func_idx >= func_list_size){
-        func_list = (struct func **) realloc (func_list, sizeof(struct func*) * (100 + func_list_size));
-        func_list_size += 100;
-      }
-      if(fscanf(funcf, "%u:%s\n", &num_branch, func_name) !=2)
-        FATAL("Wrong FuncInfo file format, can't get func name and # of branch");
-      func_list[func_idx] = (struct func *) malloc (sizeof (struct func));
-      if (func_list[func_idx] == NULL) FATAL("malloc failed");
-      strncpy(func_list[func_idx] -> name, func_name, 99);
-      func_list[func_idx] -> branch_ids = (unsigned int *) malloc (sizeof(unsigned int) * num_branch);
-      if (func_list[func_idx] -> branch_ids == NULL) FATAL("malloc failed");
-      func_list[func_idx] -> num_branch = num_branch;
-      func_idx ++;
-      func_flag = 0;
-      branch_idx = 0;
-    } else {
-      u32 cur_bid;
-      if(fscanf(funcf, "%u\n", &cur_bid) != 1)
-        FATAL("Wrong FuncInfo file format, can't get cur branch id");
-      func_list[func_idx-1] -> branch_ids[branch_idx] = cur_bid;
-      for (idx = 0; idx < 10; idx ++){
-        if (bid_func_map[cur_bid][idx] == 0) {
-          bid_func_map[cur_bid][idx] = func_idx;
-          break;
-        } 
-      }
-      branch_idx ++;
-      if (branch_idx >= num_branch){func_flag = 1;}  
+    switch (read_flag){
+      case 0:
+        if (func_idx >= func_list_size){
+          func_list = (struct func **) realloc (func_list, sizeof(struct func*) * (100 + func_list_size));
+          func_list_size += 100;
+        }
+        if(fscanf(funcf, "%u:%s\n", &num_rel_funcs, func_name) !=2)
+          FATAL("Wrong FuncInfo file format, can't get func name and # of branch");
+        func_list[func_idx] = (struct func *) malloc (sizeof (struct func));
+        if (func_list[func_idx] == NULL) FATAL("malloc failed");
+        strncpy(func_list[func_idx] -> name, func_name, 99);
+        func_list[func_idx] -> num_rel_funcs = num_rel_funcs;
+        if (num_rel_funcs != 0){
+          func_list[func_idx] -> rel_funcs = (unsigned int*) malloc (sizeof(unsigned int) * num_rel_funcs);
+          read_flag = 1;
+          bf_idx = 0;
+        } else {
+          func_list[func_idx] -> num_branch = 0;
+          func_idx ++;
+        }
+        break;
+      case 1:
+        if(fscanf(funcf, "%u\n", &cur_fid) != 1)
+          FATAL("Wrong FuncInfo file format, can't get rel function id");
+        func_list[func_idx] -> rel_funcs[bf_idx] = cur_fid;
+        bf_idx ++;
+        if (bf_idx == num_rel_funcs) read_flag = 2;
+        break;
+      case 2:
+        if(fscanf(funcf, "%u:%s\n", &num_branch, func_name) !=2)
+          FATAL("Wrong FuncInfo file format, can't get func name and # of branch");
+        func_list[func_idx] -> num_branch = num_branch;
+        if (num_branch != 0){
+          func_list[func_idx] -> branch_ids = (unsigned int *) malloc (sizeof(unsigned int) * num_branch);
+          if (func_list[func_idx] -> branch_ids == NULL) FATAL("malloc failed");
+          bf_idx = 0;
+          read_flag = 3;
+        } else {
+          func_list[func_idx]-> branch_ids = NULL;
+          bf_idx = 0;
+          read_flag = 0;
+          func_idx++;
+        }
+        break;
+      case 3:
+        if(fscanf(funcf, "%u\n", &cur_bid) != 1)
+          FATAL("Wrong FuncInfo file format, can't get cur branch id");
+        func_list[func_idx] -> branch_ids[bf_idx] = cur_bid;
+        for (idx = 0; idx < 10; idx ++){
+          if (bid_func_map[cur_bid][idx] == 0) {
+            bid_func_map[cur_bid][idx] = func_idx + 1;
+          }
+        }
+        bf_idx ++;
+        if (bf_idx == num_branch) {
+          func_idx ++;
+          read_flag = 0;
+        }
+        break;
     }
   }
   num_func = func_idx;
@@ -1232,6 +1268,7 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
 
   last_path_time = get_cur_time();
 
+  /*
   if (func_exec_table){
     for (i = 0; i < num_func ; i ++){
       func_exec_list[i] = 0;
@@ -1253,6 +1290,7 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
       }
     }
   }
+  */
 }
 
 
@@ -4351,6 +4389,8 @@ static void show_stats(void) {
 
   if (cur_ms - start_time > 10 * 60 * 1000) run_over10m = 1;
 
+  if (cur_ms - start_time > TOTAL_TIMEOUT) stop_soon = 1;
+
   /* Calculate smoothed exec speed stats. */
 
   if (!last_execs) {
@@ -4581,7 +4621,7 @@ static void show_stats(void) {
   if (target_func != -1) {
      sprintf(tmp, "%u", num_target_func);
      SAYF(bV bSTOP " # of target func : " cRST "%-17s " bSTG bV bSTOP, tmp);
-     sprintf(tmp, "%u", num_rel_func);
+     sprintf(tmp, "%u/%u", num_rel_func, num_func);
      SAYF("  # of rel func : " cRST "%-21s " bSTG bV "\n", tmp);
      
      sprintf(tmp, "%u/%u", hit_count,num_rel_branch);
@@ -5545,7 +5585,7 @@ static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
 
 static u8 fuzz_one(char** argv) {
 
-  s32 len, fd, temp_len, i, j;
+  s32 len, fd, temp_len, i, j, k;
   u8  *in_buf, *out_buf, *orig_in, *ex_tmp, *eff_map = 0;
   u64 havoc_queued,  orig_hit_cnt, new_hit_cnt;
   u32 splice_cycle = 0, perf_score = 100, orig_perf, prev_cksum, eff_cnt = 1;
@@ -5702,11 +5742,6 @@ static u8 fuzz_one(char** argv) {
 
       //get related branches
       if (func_file && rb_fuzzing) {
-        stage_name  = "get rel branches";
-        stage_short = "get_rel";
-        stage_max   = 1;
-        stage_cur = 1;
-        show_stats();
         u32 * target_funcs = bid_func_map[rb_fuzzing - 1];
         //choose random func
         num_rel_func = 0;
@@ -5717,19 +5752,11 @@ static u8 fuzz_one(char** argv) {
           num_target_func ++;
           if(target_funcs[i] == 0) break;
           target_func = target_funcs[i] - 1;
-          if (target_func != -1 && func_exec_table[target_func][target_func]){
-            u32 target_exec = func_exec_table[target_func][target_func];
-            if (target_exec == 0) FATAL("0 execution of target function\n"); 
-            for (i = 0; i < num_func; i ++){
-              double rel = ((double) func_exec_table[target_func][i]) / target_exec;
-              func_rel_table[i] = rel;
-              num_rel_func += (rel >= REL_FUNC_THRESHOLD);
-              if (rel >= REL_FUNC_THRESHOLD){
-                for (j = 0; j < func_list[i]->num_branch; j ++){
-                  rel_branch_map[func_list[i]->branch_ids[j]] = 1;
-                }
-              }
-            }     
+          num_rel_func += func_list[i] -> num_rel_funcs;
+          for (j = 0; j < func_list[i] -> num_rel_funcs; j++){
+            for (k = 0; k < func_list[j] -> num_branch; k++){
+              rel_branch_map[func_list[j]->branch_ids[k]] = 1;
+            }
           }
         }
         for (i = 0; i < MAP_SIZE; i ++){
@@ -9273,6 +9300,8 @@ int main(int argc, char** argv) {
       printf("\n");
     }
     */
+    
+    /*
     func_exec_table = (u32 **) malloc (sizeof(u32*) * num_func + sizeof(u32) * num_func * num_func);
     if (func_exec_table == NULL) FATAL("malloc failed");
     memset(func_exec_table, 0, sizeof(u32*) * num_func + sizeof(u32) * num_func * num_func);
@@ -9284,6 +9313,7 @@ int main(int argc, char** argv) {
     for (idx = 0; idx < num_func ; idx++){
       func_exec_table[idx] = ptr2 + num_func * idx;
     }
+    */
   }
 
   setup_dirs_fds();
@@ -9329,6 +9359,25 @@ int main(int argc, char** argv) {
     start_time += 4000;
     if (stop_soon) goto stop_fuzzing;
   }
+
+  //debug
+  /*
+  if (func_file){
+    u32 idx, idx2;
+    u64 num_hash = 0;
+    for (idx = 0; idx < MAP_SIZE; idx++){
+     for (idx2 = 0; idx2 < 10; idx2++){
+       if (bid_func_map[idx][idx2] == 0) break;
+       num_hash ++;
+     }
+    }
+    char * tmppp = alloc_printf("%s/bid_hash.log", out_dir);
+    FILE * tmpf = fopen(tmppp, "w"); 
+    ck_free(tmppp);
+    fprintf(tmpf, "%u/%u (%lf)", num_hash, MAP_SIZE, (double) num_hash / MAP_SIZE );
+    fclose(tmpf);
+  }
+  */
 
   while (1) {
 
@@ -9440,13 +9489,17 @@ stop_fuzzing:
     if (func_list){
       u32 idx1;
       for (idx1 = 0; idx1 < num_func; idx1++){
-        free(func_list[idx1] -> branch_ids);
-        free(func_list[idx1]);
+        if (func_list[idx1]){
+          if (func_list[idx1] -> branch_ids)
+            free(func_list[idx1] -> branch_ids);
+          if (func_list[idx1] -> rel_funcs)
+            free(func_list[idx1] -> rel_funcs);
+          free(func_list[idx1]);
+        }
       }
       free(func_list);
     }
   }
-  if (func_exec_table) free(func_exec_table);
 
   u8 * fnn = alloc_printf("%s/branch_map.log", out_dir);
   FILE * fnnn = NULL;

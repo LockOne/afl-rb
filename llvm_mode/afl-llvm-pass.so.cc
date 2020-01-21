@@ -45,6 +45,7 @@
 
 
 #include "llvm/IR/CFG.h"
+#include "llvm/IR/CallSite.h"
 
 using namespace llvm;
 
@@ -70,6 +71,14 @@ namespace {
 
 char AFLCoverage::ID = 0;
 
+
+struct FuncInfo {
+  Function * func;
+  std::vector<Function *> predecessors;
+  std::vector<Function *> successors;
+};
+
+std::vector<FuncInfo> func_infos;
 
 bool AFLCoverage::runOnModule(Module &M) {
 
@@ -120,15 +129,12 @@ bool AFLCoverage::runOnModule(Module &M) {
 
   /* Instrument all the things! */
   int inst_blocks = 0;
-  int func_num = 0;
-  std::cout << "Funcinfo functions : \n";
   for (auto &F : M){
     int bb_num = 0;
-    std::cout << F.getName().str() << " ";
     if (!F.empty()){
       entryblocks.push_back(&F.getEntryBlock());
     }
-    //std::cout << "entry block : " << &F.getEntryBlock() << "\n";
+    std::vector<Function *> succ_funcs;
     for (auto BB = F.begin() ; BB != F.end() ; BB++) {
       BasicBlock::iterator IP = (*BB).getFirstInsertionPt();
       IRBuilder<> IRB(&(*IP));
@@ -167,16 +173,46 @@ bool AFLCoverage::runOnModule(Module &M) {
       Store->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
 
       inst_blocks++;
+      for (auto inst = (*BB).begin(); inst != (*BB).end(); inst ++){
+         if (isa<CallInst>(&(*inst)) || isa<InvokeInst>(&(*inst))){
+           CallSite cs = CallSite(&(*inst));
+           Function * succ = cs.getCalledFunction();
+           succ_funcs.push_back(succ);
+         }
+      }
     }
-    std::cout << "BB num : " << bb_num << "\n";
-    if (bb_num >= 1) {func_num++;}
+    if (bb_num >= 1) {
+      FuncInfo _funcinfo;
+      _funcinfo.func = &F;
+      for (auto f = succ_funcs.begin(); f != succ_funcs.end(); f++){
+        _funcinfo.successors.push_back(*f);
+      } 
+      func_infos.push_back(_funcinfo);
+    }
   }
 
-  //func << func_num << "\n";
+  std::map<Function *, unsigned int> func_ids;
+  unsigned int func_idx = 0;
 
-  for (auto &F : M) {
+  for (auto fi = func_infos.begin(); fi != func_infos.end(); fi ++){
+    Function * predecessor = fi->func;
+    func_ids.insert(std::make_pair(predecessor, func_idx));
+    func_idx++;
+    for (auto sf = fi->successors.begin() ; sf != fi->successors.end(); sf++){
+      for (auto fi2 = func_infos.begin(); fi2 != func_infos.end(); fi2++){
+        if (fi2->func == *sf){
+          fi2->predecessors.push_back(predecessor);
+          break;
+        }
+      }
+    }
+  }
+
+  for (auto fi = func_infos.begin(); fi != func_infos.end(); fi++){
+    Function * cur_func = fi->func;
     std::set<unsigned int> ids;
-    for (auto &BB : F) {
+    //if (cur_func->getName() == "main") continue;
+    for (auto &BB : *cur_func) {
       unsigned int cur_loc = block_afl_map.find(&BB) -> second;
       for (succ_iterator succs = succ_begin(&BB); succs != succ_end(&BB); succs++){
         unsigned int next_loc = block_afl_map.find(*succs) -> second;
@@ -196,29 +232,45 @@ bool AFLCoverage::runOnModule(Module &M) {
             } else {
               next_loc = block_afl_map.find(*eB) -> second;
             }
-            if (next_loc > (1 << 16)){
-              std::cout << "next_loc over 2^ 16\n";
-            }
             unsigned int branch_id = (cur_loc >> 1) ^ next_loc;
             ids.insert(branch_id);
           }
         } else if (isa<IndirectBrInst>(BBt)) {
-          std::cout << "indirect branch : no successor \n";
+          //std::cout << "indirect branch : no successor \n";
         } else if (isa<UnreachableInst> (BBt)) {
-          std::cout << "unreachable : no successor\n";
+          //std::cout << "unreachable : no successor\n";
         } else {
-          std::cout << "Warning : no successor?\n";
+          //std::cout << "Warning : no successor?\n";
         }
       }
     }
-    if (ids.size() > 0){
-      func << ids.size() << ":" <<  F.getName().str() << "\n";
-      for (auto id= ids.begin(); id!=ids.end(); id++){
-        func << *id << "\n";
-        std::cout << *id << "\n";
+    std::set<Function *> rel_funcs;
+    for (auto pf = fi->predecessors.begin(); pf != fi->predecessors.end(); pf ++){
+      rel_funcs.insert(*pf);
+    }
+    for (auto sf = fi->successors.begin() ; sf != fi->successors.end(); sf++){
+      rel_funcs.insert(*sf);
+    }
+    auto rf = rel_funcs.begin();
+    while (rf != rel_funcs.end()){
+      if ((*rf == 0) || (func_ids.find(*rf) == func_ids.end())){
+        rel_funcs.erase(rf++);
+      } else {
+        rf ++;
       }
     }
+    func << rel_funcs.size() << ":" << fi->func->getName().str() << "\n"; //log to keep func id
+    if (rel_funcs.size() != 0){
+    for (auto rf = rel_funcs.begin() ; rf != rel_funcs.end() ; rf ++){
+      func << func_ids.find(*rf)-> second << "\n";
+    }
+    func << ids.size() << ":" <<  fi->func->getName().str() << "\n";
+    for (auto id= ids.begin(); id!=ids.end(); id++){
+      func << *id << "\n";
+    }
+    }
   }
+  
   func.close();
 
   /* Say something nice. */
