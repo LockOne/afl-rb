@@ -26,7 +26,7 @@
 
 
 #define REL_FUNC_THRESHOLD 0.95
-#define MASK_THRESHOLD 0.90
+#define MASK_THRESHOLD 0.9
 
 #define TOTAL_TIMEOUT 24 * 60 * 60 * 1000
 
@@ -321,7 +321,7 @@
    problems with complex programs). You need to recompile the target binary
    after changing this - otherwise, SEGVs may ensue. */
 
-#define MAP_SIZE_POW2       18
+#define MAP_SIZE_POW2       16
 #define MAP_SIZE            (1 << MAP_SIZE_POW2)
 
 /* Maximum allocator request size (keep well under INT_MAX): */

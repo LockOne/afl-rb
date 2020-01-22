@@ -828,13 +828,15 @@ void read_func_file(u8 * input_file){
         func_list[func_idx] = (struct func *) malloc (sizeof (struct func));
         if (func_list[func_idx] == NULL) FATAL("malloc failed");
         strncpy(func_list[func_idx] -> name, func_name, 99);
-        func_list[func_idx] -> num_rel_funcs = num_rel_funcs;
         if (num_rel_funcs != 0){
+          num_rel_funcs ++;
+          func_list[func_idx] -> num_rel_funcs = num_rel_funcs;
           func_list[func_idx] -> rel_funcs = (unsigned int*) malloc (sizeof(unsigned int) * num_rel_funcs);
           read_flag = 1;
           bf_idx = 0;
         } else {
           func_list[func_idx] -> num_branch = 0;
+          func_list[func_idx] -> num_rel_funcs = 0;
           func_idx ++;
         }
         break;
@@ -9486,13 +9488,14 @@ stop_fuzzing:
 
   }
   if (func_file){
-    if (func_list){
+    if (func_list != NULL){
+     
       u32 idx1;
       for (idx1 = 0; idx1 < num_func; idx1++){
-        if (func_list[idx1]){
-          if (func_list[idx1] -> branch_ids)
+        if (func_list[idx1] != NULL){
+          if (func_list[idx1] -> branch_ids != NULL)
             free(func_list[idx1] -> branch_ids);
-          if (func_list[idx1] -> rel_funcs)
+          if (func_list[idx1] -> rel_funcs != NULL)
             free(func_list[idx1] -> rel_funcs);
           free(func_list[idx1]);
         }

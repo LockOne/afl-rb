@@ -261,6 +261,7 @@ bool AFLCoverage::runOnModule(Module &M) {
     }
     func << rel_funcs.size() << ":" << fi->func->getName().str() << "\n"; //log to keep func id
     if (rel_funcs.size() != 0){
+    func << func_ids.find(fi->func)-> second << "\n";
     for (auto rf = rel_funcs.begin() ; rf != rel_funcs.end() ; rf ++){
       func << func_ids.find(*rf)-> second << "\n";
     }
