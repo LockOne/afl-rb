@@ -810,7 +810,6 @@ void read_func_file(u8 * input_file){
   u32 cur_bid;
   u8 read_flag = 0; // 0 : func, 1 : rel func, 2 : branch func, 3 : branch id
   u8 idx = 0;
-  u32 linenum  = 0;
   if (func_list == NULL){
     func_list = (struct func **) malloc (sizeof(struct func *) * 100);
     func_list_size += 100;
@@ -1043,20 +1042,7 @@ static int* get_lowest_hit_branch_ids(){
 /* return 0 if current trace bits hits branch with id branch_id,
   0 otherwise */
 static int hits_branch(int branch_id){
-  if (target_func == -1){
-    return (trace_bits[branch_id] != 0);
-  } 
-  u32 idx;
-  hit_count = 0;
-  for (idx = 0; idx < MAP_SIZE ; idx++){
-    if(unlikely(trace_bits[idx])){
-     if(rel_branch_map[idx]){
-        hit_count ++;
-      }
-    }
-  }
-  //return (queue_cur->bitmap_size * rel_threshold < hit_count);
-  return ( ((double) hit_count / queue_cur->bitmap_size) > ((double) num_rel_branch / MAP_SIZE));
+  return (trace_bits[branch_id] != 0);
 }
 
 // checks if hits a rare branch with mini trace bits
@@ -1234,8 +1220,6 @@ static u32 count_bytes(u8* mem);
 static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
 
   struct queue_entry* q = ck_alloc(sizeof(struct queue_entry));
-  u32 i,j;
-
   // @RB@ added these for every queue entry
   q->trace_mini = ck_alloc(MAP_SIZE >> 3);
   minimize_bits(q->trace_mini, trace_bits);
@@ -5756,8 +5740,9 @@ static u8 fuzz_one(char** argv) {
           target_func = target_funcs[i] - 1;
           num_rel_func += func_list[i] -> num_rel_funcs;
           for (j = 0; j < func_list[i] -> num_rel_funcs; j++){
-            for (k = 0; k < func_list[j] -> num_branch; k++){
-              rel_branch_map[func_list[j]->branch_ids[k]] = 1;
+            u32 tmp_rel_func = func_list[i]->rel_funcs[j];
+            for (k = 0; k < func_list[tmp_rel_func] -> num_branch; k++){
+              rel_branch_map[func_list[tmp_rel_func] ->branch_ids[k]] = 1;
             }
           }
         }
@@ -6116,18 +6101,20 @@ skip_simple_bitflip:
 
     if (rb_fuzzing && !shadow_mode && use_branch_mask > 0){
       if (func_file) {
-      u32 idx;
-      hit_count = 0;
-      for (idx = 0; idx < MAP_SIZE ; idx++){
-        if(unlikely(trace_bits[idx])){
-          if(rel_branch_map[idx]){
-            hit_count ++;
+        u32 idx;
+        hit_count = 0;
+//        if (trace_bits[rb_fuzzing -1] != 0){
+          for (idx = 0; idx < MAP_SIZE ; idx++){
+            if(unlikely(trace_bits[idx])){
+              if(rel_branch_map[idx]){
+                hit_count ++;
+              }
+            }
           }
-        }
-      }
-      tmp_branch_mask[stage_cur] = hit_count;
-      max_branch_mask = (max_branch_mask < hit_count) ? hit_count : max_branch_mask;
-      min_branch_mask = (min_branch_mask > hit_count) ? hit_count : min_branch_mask;
+          tmp_branch_mask[stage_cur] = hit_count;
+          max_branch_mask = (max_branch_mask < hit_count) ? hit_count : max_branch_mask;
+          min_branch_mask = (min_branch_mask > hit_count) ? hit_count : min_branch_mask;
+ //       }
       } else{
         if (hits_branch(rb_fuzzing - 1)){
           branch_mask[stage_cur] = 1;
@@ -6222,13 +6209,15 @@ skip_simple_bitflip:
       if (func_file){
         u32 idx;
         hit_count = 0;
-        for (idx = 0; idx < MAP_SIZE ; idx++){
-          if(unlikely(trace_bits[idx])){
-            if(rel_branch_map[idx]){
-              hit_count ++;
+//        if (trace_bits[rb_fuzzing-1] != 0){
+          for (idx = 0; idx < MAP_SIZE ; idx++){
+            if(unlikely(trace_bits[idx])){
+              if(rel_branch_map[idx]){
+                hit_count ++;
+              }
             }
           }
-        }
+ //       }
         tmp_branch_mask[stage_cur] = hit_count;
         max_branch_mask = (max_branch_mask < hit_count) ? hit_count : max_branch_mask;
         min_branch_mask = (min_branch_mask > hit_count) ? hit_count : min_branch_mask;
@@ -6271,13 +6260,15 @@ skip_simple_bitflip:
       if (func_file){
         u32 idx;
         hit_count = 0;
-        for (idx = 0; idx < MAP_SIZE ; idx++){
-          if(unlikely(trace_bits[idx])){
-            if(rel_branch_map[idx]){
-              hit_count ++;
+//        if (trace_bits[rb_fuzzing -1] != 0){
+          for (idx = 0; idx < MAP_SIZE ; idx++){
+            if(unlikely(trace_bits[idx])){
+              if(rel_branch_map[idx]){
+                hit_count ++;
+              }
             }
           }
-        }
+//        }
         tmp_branch_mask[stage_cur] = hit_count;
         max_branch_mask = (max_branch_mask < hit_count) ? hit_count : max_branch_mask;
         min_branch_mask = (min_branch_mask > hit_count) ? hit_count : min_branch_mask;

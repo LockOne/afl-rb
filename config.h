@@ -26,7 +26,7 @@
 
 
 #define REL_FUNC_THRESHOLD 0.95
-#define MASK_THRESHOLD 0.9
+#define MASK_THRESHOLD 0.5
 
 #define TOTAL_TIMEOUT 24 * 60 * 60 * 1000
 
