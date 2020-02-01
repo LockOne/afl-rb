@@ -26,7 +26,7 @@
 
 
 #define REL_FUNC_THRESHOLD 0.95
-#define MASK_THRESHOLD 0.5
+#define MASK_THRESHOLD 0.9
 
 #define TOTAL_TIMEOUT 24 * 60 * 60 * 1000
 
@@ -84,7 +84,7 @@
 /* Baseline number of random tweaks during a single 'havoc' stage: */
 
 #define HAVOC_CYCLES        256
-#define HAVOC_CYCLES_REL    256
+#define HAVOC_CYCLES_REL    320
 #define HAVOC_CYCLES_INIT   1024
 
 /* Maximum multiplier for the above (should be a power of two, beware
@@ -133,6 +133,7 @@
 /* Nominal per-splice havoc cycle length: */
 
 #define SPLICE_HAVOC        32
+#define SPLICE_HAVOC_REL        32
 
 /* Maximum offset for integer addition / subtraction stages: */
 
