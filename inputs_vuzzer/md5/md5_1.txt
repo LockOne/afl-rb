@@ -1,7 +1,0 @@
-91a1800070b5751f4a14880773ec35ad  /home/cheong/vuzzer64/fuzzer-code/datatemp/b64/f1.b64
-1af2483547c0f4c5e6e972428e3b74c5  /home/cheong/vuzzer64/fuzzer-code/datatemp/b64/f2.b64
-eac9eeb91a1511389b824398bdc50eca  /home/cheong/vuzzer64/fuzzer-code/datatemp/b64/f3.b64
-f075a23a49b79b7c2ee0f93f92065f20  /home/cheong/vuzzer64/fuzzer-code/datatemp/b64/rand.b64
-0c094be1fe5c278ae991182282d67431  /home/cheong/vuzzer64/fuzzer-code/datatemp/cflow/gnu.c
-df1a9f04464c348035714cce11e22b84  /home/cheong/vuzzer64/fuzzer-code/datatemp/cflow/posix.c
-6e9c5cf168c5dbd92804481fdbcc82a2  /home/cheong/vuzzer64/fuzzer-code/datatemp/cflow/rc.c

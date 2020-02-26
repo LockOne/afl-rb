@@ -293,12 +293,18 @@ struct func {
   char name[100];
 }; 
 
-static struct func ** func_list;
-static u32 ** func_exec_table;
-static u8 * func_exec_list;
-static double * func_rel_table;
+static struct func ** func_list = NULL;
+static u32 ** func_exec_table = NULL;
+static u8 * func_exec_list = NULL;
+static u32 * func_exec_ids = NULL;
+static u64 * func_exec_hash = NULL;
+static u32 num_hash = 0;
+static u32 size_hash = 100;
+static u32 func_exec_cur_id = 0;
+static double * func_rel_table = NULL;
 static u32 num_func;
 static u8 num_target_func = 0;
+static u8 func_status = 0;
 static u32 num_rel_func;
 static u32 num_rel_branch;
 static u32* bid_func_map[MAP_SIZE];  //store maximum 10 function idx, +1 on idx to avoid 0
@@ -306,12 +312,11 @@ static u8  rel_branch_map[MAP_SIZE];
 static u32 target_func = -1;
 static u32 mask_size;
 static u32 cur_len;
-static FILE * mask_size_file;
-static FILE * rel_func_file;
+static FILE * mask_size_file = NULL;
+static FILE * rel_func_file = NULL; 
 static u32 hit_count = 0;
 static u32 func_list_size = 0;
-static double rel_threshold = 0.5;
-
+static double func_rel_threshold = FUNC_REL_THRESHOLD1;
 /* @RB@ Things about branches */
 
 static u32 vanilla_afl = 1000;      /* @RB@ How many executions to conduct 
@@ -834,9 +839,9 @@ void read_func_file(u8 * input_file){
       func_list[func_idx-1] -> branch_ids[branch_idx] = cur_bid;
       for (idx = 0; idx < 10; idx ++){
         if (bid_func_map[cur_bid][idx] == 0) {
-          bid_func_map[cur_bid][idx] = func_idx;
+          bid_func_map[cur_bid][idx] = func_idx; // func_idx already had ++ed, so x have to ++.
           break;
-        } 
+        }
       }
       branch_idx ++;
       if (branch_idx >= num_branch){func_flag = 1;}  
@@ -1017,7 +1022,6 @@ static int hits_branch(int branch_id){
       }
     }
   }
-  //return (queue_cur->bitmap_size * rel_threshold < hit_count);
   return ( ((double) hit_count / queue_cur->bitmap_size) > ((double) num_rel_branch / MAP_SIZE));
 }
 
@@ -1233,21 +1237,39 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   last_path_time = get_cur_time();
 
   if (func_exec_table){
-    for (i = 0; i < num_func ; i ++){
+    for (i = 0; i < (num_func / 8 + 1); i ++){
       func_exec_list[i] = 0;
     }
     for (i = 0; i < MAP_SIZE ; i ++){
       if (unlikely(q->trace_mini[i >> 3] & (1 << (i & 7)))){
         for (j = 0 ; j < 10; j ++){
-          if (bid_func_map[i][j] != 0){
-            func_exec_list[bid_func_map[i][j] - 1] = 1;
+          u32 fid = bid_func_map[i][j];  // ++ed.
+          if (fid != 0){
+            func_exec_list[(fid - 1) / 8] |= 1 << ((fid - 1) % 8);
           } else break;
         }
       }
     }
+    u64 hash = 0;
+    for (i = 0; i < num_func ; i ++){
+      if (func_exec_list[i / 8] & (1 << (i % 8))){
+        if (func_exec_ids[i] == 0xffffffff){
+          func_exec_ids[i] = func_exec_cur_id++;
+        }
+        hash |= 1 << ((func_exec_cur_id - 1) % 64);
+      }
+    }
+    for (i = 0; i < num_hash ; i++){
+      if (hash == func_exec_hash[i]) { return;}
+    }
+    func_exec_hash[num_hash++] = hash;
+    if (num_hash == size_hash) {
+      func_exec_hash = (u64 *) realloc(func_exec_hash, sizeof(u64) * (size_hash + 100));
+      size_hash += 100;
+    } 
     for (i = 0; i < num_func ; i++){
       for(j = 0; j < num_func; j++){
-        if(func_exec_list[i] & func_exec_list[j]){
+        if((func_exec_list[i/8] & (1 << (i % 8))) & (func_exec_list[j/8] & ( 1 << (j % 8)))){
           func_exec_table[i][j] += 1;
         }
       }
@@ -4348,8 +4370,18 @@ static void show_stats(void) {
   if (cur_ms - last_ms < 1000 / UI_TARGET_HZ) return;
 
   /* Check if we're past the 10 minute mark. */
+  u64 delta_ms = cur_ms - start_time;
 
-  if (cur_ms - start_time > 10 * 60 * 1000) run_over10m = 1;
+  if (delta_ms > 10 * 60 * 1000) run_over10m = 1;
+
+  if (delta_ms > TOTAL_TIMEOUT) stop_soon = 1;
+
+  if (func_file && func_status == 0 && delta_ms > FUNC_TIMEOUT1)
+    {func_status = 1; func_rel_threshold = FUNC_REL_THRESHOLD1;}
+  else if (func_status == 1 && delta_ms > FUNC_TIMEOUT2)
+    {func_status = 2; func_rel_threshold = FUNC_REL_THRESHOLD2;}
+  else if (func_status == 2 && delta_ms > FUNC_TIMEOUT3)
+    {func_status = 3; func_rel_threshold = FUNC_REL_THRESHOLD3;}
 
   /* Calculate smoothed exec speed stats. */
 
@@ -4580,23 +4612,25 @@ static void show_stats(void) {
 
   if (target_func != -1) {
      sprintf(tmp, "%u", num_target_func);
-     SAYF(bV bSTOP " # of target func : " cRST "%-17s " bSTG bV bSTOP, tmp);
+     SAYF(bV bSTOP " # of target func: " cRST "%-17s " bSTG bV bSTOP, tmp);
      sprintf(tmp, "%u", num_rel_func);
      SAYF("  # of rel func : " cRST "%-21s " bSTG bV "\n", tmp);
      
      sprintf(tmp, "%u/%u", hit_count,num_rel_branch);
      SAYF(bV bSTOP " rel branch hit  : " cRST "%-17s " bSTG bV bSTOP,tmp);
-     sprintf(tmp, "%0.2f", rel_threshold);
-     SAYF("  rel threshold : "  cRST "%-21s " bSTG bV "\n",tmp);
+     sprintf(tmp, "%u", func_status);
+     SAYF(" func status    : " cRST "%-21s " bSTG bV "\n",tmp);
 
   } else {
      sprintf(tmp, "None");
      SAYF(bV bSTOP "  target func    : " cRST "%-17s " bSTG bV bSTOP,tmp);
-     SAYF("                           " bSTG bV "\n");
+     sprintf(tmp,"%u", func_status);
+     SAYF(" func status    : " cRST "%-21s " bSTG bV "\n",tmp);
   }
   sprintf(tmp, "%u", queue_cur->bitmap_size);
   SAYF(bV bSTOP " cur bitmap size : " cRST "%-17s " bSTG bV bSTOP,tmp);
-  SAYF("              "  bSTG bV "\n");
+  sprintf(tmp, "%u", num_hash);
+  SAYF(" Func Rel TCs  : "  cRST "%-21s " bSTG bV "\n", tmp);
  
   sprintf(tmp, "%s (%0.02f%%)", DI(cur_skipped_paths),
           ((double)cur_skipped_paths * 100) / queued_paths);
@@ -5701,7 +5735,7 @@ static u8 fuzz_one(char** argv) {
       //ck_free(rarest_branches);
 
       //get related branches
-      if (func_file && rb_fuzzing) {
+      if (func_status && rb_fuzzing) {
         stage_name  = "get rel branches";
         stage_short = "get_rel";
         stage_max   = 1;
@@ -5723,8 +5757,8 @@ static u8 fuzz_one(char** argv) {
             for (i = 0; i < num_func; i ++){
               double rel = ((double) func_exec_table[target_func][i]) / target_exec;
               func_rel_table[i] = rel;
-              num_rel_func += (rel >= REL_FUNC_THRESHOLD);
-              if (rel >= REL_FUNC_THRESHOLD){
+              num_rel_func += (rel >= func_rel_threshold);
+              if (rel >= func_rel_threshold){
                 for (j = 0; j < func_list[i]->num_branch; j ++){
                   rel_branch_map[func_list[i]->branch_ids[j]] = 1;
                 }
@@ -6086,7 +6120,7 @@ skip_simple_bitflip:
     if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
     if (rb_fuzzing && !shadow_mode && use_branch_mask > 0){
-      if (func_file) {
+      if (func_status) {
       u32 idx;
       hit_count = 0;
       for (idx = 0; idx < MAP_SIZE ; idx++){
@@ -6133,7 +6167,8 @@ skip_simple_bitflip:
     out_buf[stage_cur] ^= 0xFF;
 
   }
-  if( func_file){
+
+  if(func_status){
     mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
     for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
       if (tmp_branch_mask[stage_cur] > mid_branch_mask) {
@@ -6145,6 +6180,7 @@ skip_simple_bitflip:
     min_branch_mask = ~0;
     memset(tmp_branch_mask,0, sizeof(u32) * (len+1));
   }
+
   /* If the effector map is more than EFF_MAX_PERC dense, just flag the
      whole thing as worth fuzzing, since we wouldn't be saving much time
      anyway. */
@@ -6190,7 +6226,7 @@ skip_simple_bitflip:
       if (common_fuzz_stuff(argv, tmp_buf, len - 1)) goto abandon_entry;
 
       /* if even with this byte deleted we hit the branch, can delete here */
-      if (func_file){
+      if (func_status){
         u32 idx;
         hit_count = 0;
         for (idx = 0; idx < MAP_SIZE ; idx++){
@@ -6211,7 +6247,7 @@ skip_simple_bitflip:
       }
     }
 
-    if (func_file){
+    if (func_status){
       mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
       for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
         if (tmp_branch_mask[stage_cur] > mid_branch_mask) {
@@ -6239,7 +6275,7 @@ skip_simple_bitflip:
       if (common_fuzz_stuff(argv, tmp_buf, len + 1)) goto abandon_entry;
 
       /* if adding before still hit branch, can add */
-      if (func_file){
+      if (func_status){
         u32 idx;
         hit_count = 0;
         for (idx = 0; idx < MAP_SIZE ; idx++){
@@ -6260,7 +6296,7 @@ skip_simple_bitflip:
       }
     }
 
-    if (func_file){
+    if (func_status){
       mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
       for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
         if (tmp_branch_mask[stage_cur] > mid_branch_mask) {
@@ -7218,7 +7254,7 @@ havoc_stage:
 
     stage_name  = "havoc";
     stage_short = "havoc";
-    stage_max   = (doing_det ? HAVOC_CYCLES_INIT : (func_file ? HAVOC_CYCLES_REL : HAVOC_CYCLES)) *
+    stage_max   = (doing_det ? HAVOC_CYCLES_INIT : HAVOC_CYCLES) *
                   perf_score / havoc_div / 100;
 
   } else {
@@ -9276,8 +9312,14 @@ int main(int argc, char** argv) {
     func_exec_table = (u32 **) malloc (sizeof(u32*) * num_func + sizeof(u32) * num_func * num_func);
     if (func_exec_table == NULL) FATAL("malloc failed");
     memset(func_exec_table, 0, sizeof(u32*) * num_func + sizeof(u32) * num_func * num_func);
-    func_exec_list = (u8 *) malloc(sizeof (u8) * num_func);
+    func_exec_list = (u8 *) malloc(sizeof (u8) * (num_func / 8 + 1));
+    func_exec_ids = (u32 *) malloc(sizeof (u32) * num_func);
+    func_exec_hash = (u64 * ) malloc(sizeof (u64) * 100);
     if (func_exec_list == NULL) FATAL("malloc failed");
+    if (func_exec_ids == NULL) FATAL("malloc failed");
+    if (func_exec_hash == NULL) FATAL("malloc failed");
+    memset(func_exec_ids,255,sizeof(u32) * num_func);
+    memset(func_exec_hash,0,sizeof(u64) * 100);
     func_rel_table = (double *) malloc(sizeof (double) * num_func);
     if (func_rel_table == NULL) FATAL("malloc failed");
     u32 * ptr2 = (u32 *) (func_exec_table + num_func);
@@ -9378,26 +9420,7 @@ int main(int argc, char** argv) {
         sync_fuzzers(use_argv);
 
     }
-/*
-    if(func_file){
-      u8 * fn = alloc_printf("%s/rel_func.csv", out_dir);
-      rel_func_file = fopen(fn, "w");
-      ck_free(fn); 
-      u32 idx1,idx2;
-      for (idx1 = 0; idx1 < num_func; idx1++){
-        fprintf(rel_func_file,",%s",func_list[idx1]->name);
-      }
-      fprintf(rel_func_file,"\n");
-      for (idx1 = 0; idx1 < num_func; idx1++){
-        fprintf(rel_func_file,"%s,", func_list[idx1]->name);
-        for (idx2 = 0; idx2 < num_func; idx2++){
-          fprintf(rel_func_file, "%u,",func_exec_table[idx1][idx2]);
-        }
-        fprintf(rel_func_file,"\n");
-      }
-      fclose(rel_func_file);
-    }
-*/
+
     skipped_fuzz = fuzz_one(use_argv);
 
     if (!stop_soon && sync_id && !skipped_fuzz) {
@@ -9445,8 +9468,27 @@ stop_fuzzing:
       }
       free(func_list);
     }
+    u8 * fn = alloc_printf("%s/rel_func.csv", out_dir);
+    rel_func_file = fopen(fn, "w");
+    ck_free(fn); 
+    u32 idx1,idx2;
+    for (idx1 = 0; idx1 < num_func; idx1++){
+      fprintf(rel_func_file,",%s",func_list[idx1]->name);
+    }
+    fprintf(rel_func_file,"\n");
+    for (idx1 = 0; idx1 < num_func; idx1++){
+      fprintf(rel_func_file,"%s,", func_list[idx1]->name);
+      for (idx2 = 0; idx2 < num_func; idx2++){
+        fprintf(rel_func_file, "%u,",func_exec_table[idx1][idx2]);
+      }
+      fprintf(rel_func_file,"\n");
+    }
+    fclose(rel_func_file);
+    if (func_exec_table) free(func_exec_table);
+    if (func_exec_list) free(func_exec_list);
+    if (func_exec_ids) free(func_exec_ids);
+    if (func_exec_hash) free(func_exec_hash);
   }
-  if (func_exec_table) free(func_exec_table);
 
   u8 * fnn = alloc_printf("%s/branch_map.log", out_dir);
   FILE * fnnn = NULL;

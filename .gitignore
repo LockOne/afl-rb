@@ -22,3 +22,4 @@ as
 FInfos/
 subjects/
 llvm_mode/FuncInfo.txt
+inputs_vuzzer/

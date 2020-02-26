@@ -1,3 +1,0 @@
-c203086986b774c82f963732b8e83b3c  /home/cheong/vuzzer64/fuzzer-code/datatemp/bmp2/f2.bmp
-9b60435efd28ea8be0799812ae695b19  /home/cheong/vuzzer64/fuzzer-code/datatemp/bmp2/f4.bmp
-e735348250fdafc5c60fa729cde0b65d  /home/cheong/vuzzer64/fuzzer-code/datatemp/bmp2/f5.bmp
