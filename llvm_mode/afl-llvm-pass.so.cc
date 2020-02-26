@@ -196,18 +196,15 @@ bool AFLCoverage::runOnModule(Module &M) {
             } else {
               next_loc = block_afl_map.find(*eB) -> second;
             }
-            if (next_loc > (1 << 16)){
-              std::cout << "next_loc over 2^ 16\n";
-            }
             unsigned int branch_id = (cur_loc >> 1) ^ next_loc;
             ids.insert(branch_id);
           }
         } else if (isa<IndirectBrInst>(BBt)) {
-          std::cout << "indirect branch : no successor \n";
+          //std::cout << "indirect branch : no successor \n";
         } else if (isa<UnreachableInst> (BBt)) {
-          std::cout << "unreachable : no successor\n";
+          //std::cout << "unreachable : no successor\n";
         } else {
-          std::cout << "Warning : no successor?\n";
+          //std::cout << "Warning : no successor?\n";
         }
       }
     }
@@ -215,7 +212,6 @@ bool AFLCoverage::runOnModule(Module &M) {
       func << ids.size() << ":" <<  F.getName().str() << "\n";
       for (auto id= ids.begin(); id!=ids.end(); id++){
         func << *id << "\n";
-        std::cout << *id << "\n";
       }
     }
   }
