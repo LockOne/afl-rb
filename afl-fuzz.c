@@ -1010,19 +1010,7 @@ static int* get_lowest_hit_branch_ids(){
 /* return 0 if current trace bits hits branch with id branch_id,
   0 otherwise */
 static int hits_branch(int branch_id){
-  if (target_func == -1){
-    return (trace_bits[branch_id] != 0);
-  } 
-  u32 idx;
-  hit_count = 0;
-  for (idx = 0; idx < MAP_SIZE ; idx++){
-    if(unlikely(trace_bits[idx])){
-     if(rel_branch_map[idx]){
-        hit_count ++;
-      }
-    }
-  }
-  return ( ((double) hit_count / queue_cur->bitmap_size) > ((double) num_rel_branch / MAP_SIZE));
+  return (trace_bits[branch_id] != 0);
 }
 
 // checks if hits a rare branch with mini trace bits
@@ -5593,6 +5581,7 @@ static u8 fuzz_one(char** argv) {
   u8 * branch_mask = 0;
   u8 * orig_branch_mask = 0;
   u32 * tmp_branch_mask = 0;
+  u8 * target_branch_mask = 0;
   u32 max_branch_mask = 0;
   u32 mid_branch_mask = 0;
   u32 min_branch_mask = 0;
@@ -5925,7 +5914,9 @@ re_run: // re-run when running in shadow mode
   } else {
       branch_mask = ck_alloc(len + 1);
       tmp_branch_mask = ck_alloc(sizeof(u32) * (len+1));
+      target_branch_mask = ck_alloc(sizeof(u8) * (len+1));
       memset(tmp_branch_mask,0, sizeof(u32) * (len+1));
+      memset(target_branch_mask,0, sizeof(u8) * (len+1));
       orig_branch_mask = ck_alloc(len + 1);
   }
   // this will be used to store the valid modifiable positions
@@ -6131,6 +6122,7 @@ skip_simple_bitflip:
         }
       }
       tmp_branch_mask[stage_cur] = hit_count;
+      target_branch_mask[stage_cur] = trace_bits[rb_fuzzing -1] != 0;
       max_branch_mask = (max_branch_mask < hit_count) ? hit_count : max_branch_mask;
       min_branch_mask = (min_branch_mask > hit_count) ? hit_count : min_branch_mask;
       } else{
@@ -6171,7 +6163,7 @@ skip_simple_bitflip:
   if(func_status){
     mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
     for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
-      if (tmp_branch_mask[stage_cur] > mid_branch_mask) {
+      if (tmp_branch_mask[stage_cur] > mid_branch_mask || target_branch_mask[stage_cur]) {
         branch_mask[stage_cur] = 1;
         mask_size ++;
       } 
@@ -6237,6 +6229,7 @@ skip_simple_bitflip:
           }
         }
         tmp_branch_mask[stage_cur] = hit_count;
+        target_branch_mask[stage_cur] = trace_bits[rb_fuzzing -1] != 0;
         max_branch_mask = (max_branch_mask < hit_count) ? hit_count : max_branch_mask;
         min_branch_mask = (min_branch_mask > hit_count) ? hit_count : min_branch_mask;
       } else {
@@ -6250,7 +6243,7 @@ skip_simple_bitflip:
     if (func_status){
       mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
       for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
-        if (tmp_branch_mask[stage_cur] > mid_branch_mask) {
+        if (tmp_branch_mask[stage_cur] > mid_branch_mask || target_branch_mask[stage_cur]) {
           branch_mask[stage_cur] += 2;
           mask_size ++;
         } 
@@ -6286,6 +6279,7 @@ skip_simple_bitflip:
           }
         }
         tmp_branch_mask[stage_cur] = hit_count;
+        target_branch_mask[stage_cur] = trace_bits[rb_fuzzing -1] != 0;
         max_branch_mask = (max_branch_mask < hit_count) ? hit_count : max_branch_mask;
         min_branch_mask = (min_branch_mask > hit_count) ? hit_count : min_branch_mask;
       } else {
@@ -6299,7 +6293,7 @@ skip_simple_bitflip:
     if (func_status){
       mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
       for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
-        if (tmp_branch_mask[stage_cur] > mid_branch_mask) {
+        if (tmp_branch_mask[stage_cur] > mid_branch_mask || target_branch_mask[stage_cur]) {
           branch_mask[stage_cur] += 4;
           mask_size ++;
         } 
