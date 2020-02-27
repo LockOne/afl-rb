@@ -1190,7 +1190,7 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
               *tmp_num_branch += 1;
               if (*tmp_num_branch % 100 == 0){
                 func_list[j]->branch_ids = (u32 *) realloc (func_list[j]->branch_ids,
-                                                            sizeof(unsigned int) * (*tmp_num_branch+ 100));
+                                                            sizeof(u32) * (*tmp_num_branch+ 100));
               }
             }
             func_exec_list[j] = 1;
@@ -1201,9 +1201,9 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
           func_list[j] = (struct func *) malloc(sizeof(struct func));
           func_list[j] -> func_id = func_id;
           func_list[j] -> num_branch = 1;
-          func_list[j] -> branch_ids = (u32 *) malloc (sizeof(unsigned int) * 100);
+          func_list[j] -> branch_ids = (u32 *) malloc (sizeof(u32) * 100);
           func_list[j] -> branch_ids[0] = i;
-          func_list[j] -> func_execs = (u32 *) malloc (sizeof(unsigned int) * exec_size);
+          func_list[j] -> func_execs = (u32 *) malloc (sizeof(u32) * exec_size);
           num_func ++;
           if (func_list_size == num_func){
             func_list = (struct func **) realloc(func_list, sizeof(struct func) * (func_list_size+ 100));
@@ -1224,8 +1224,8 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
     if (exec_size < num_func){
       u32 new_size = num_func - (num_func % 100) + 100;
       for (i = 0; i < num_func; i ++){
-        func_list[j] -> func_execs = (u32 *) realloc (func_list[j]->func_execs, sizeof(unsigned int) * new_size);
-        memset(func_list[j]->func_execs + exec_size, 0, sizeof(u32) * (new_size-exec_size));
+        func_list[i] -> func_execs = (u32 *) realloc (func_list[i]->func_execs, sizeof(u32) * new_size);
+        memset(func_list[i]->func_execs + exec_size, 0, sizeof(u32) * (new_size-exec_size));
       }
       exec_size = new_size;
     }
