@@ -23,6 +23,8 @@
 
 #define VERSION             "2.52b"
 
+#define TOTAL_TIMEOUT   1000 * 60 * 60 * 24
+
 /******************************************************
  *                                                    *
  *  Settings that may be of interest to power users:  *

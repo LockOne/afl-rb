@@ -4240,6 +4240,7 @@ static void show_stats(void) {
   /* Check if we're past the 10 minute mark. */
 
   if (cur_ms - start_time > 10 * 60 * 1000) run_over10m = 1;
+  if (cur_ms - start_time > TOTAL_TIMEOUT) stop_soon = 2;
 
   /* Calculate smoothed exec speed stats. */
 
