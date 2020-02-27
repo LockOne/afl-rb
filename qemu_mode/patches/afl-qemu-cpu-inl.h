@@ -108,7 +108,7 @@ static inline TranslationBlock *tb_find(CPUState*, TranslationBlock*, int);
 
 static void afl_setup(void) {
 
-  char *id_str = getenv(SHM_ENV_VAR),
+  char *id_str = getenv(SHM_ENV_VAR1),
        *inst_r = getenv("AFL_INST_RATIO");
 
   int shm_id;

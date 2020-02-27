@@ -50,8 +50,12 @@
    It will end up as .comm, so it shouldn't be too wasteful. */
 
 u8  __afl_area_initial[MAP_SIZE];
-u8* __afl_area_ptr = __afl_area_initial;
+u32  __afl_area_initial2[MAP_SIZE];
 
+u8* __afl_area_ptr = __afl_area_initial;
+u32* __afl_func_ptr = __afl_area_initial2;
+
+__thread u32 __afl_func_id;
 __thread u32 __afl_prev_loc;
 
 
@@ -64,7 +68,7 @@ static u8 is_persistent;
 
 static void __afl_map_shm(void) {
 
-  u8 *id_str = getenv(SHM_ENV_VAR);
+  u8 *id_str = getenv(SHM_ENV_VAR1);
 
   /* If we're running under AFL, attach to the appropriate region, replacing the
      early-stage __afl_area_initial region that is needed to allow some really
@@ -85,8 +89,12 @@ static void __afl_map_shm(void) {
 
     __afl_area_ptr[0] = 1;
 
+    id_str = getenv(SHM_ENV_VAR2);
+    if (id_str) {
+      shm_id = atoi(id_str);
+      __afl_func_ptr = shmat(shm_id, NULL, 0);
+    }
   }
-
 }
 
 
@@ -187,7 +195,7 @@ int __afl_persistent_loop(unsigned int max_cnt) {
 
     if (is_persistent) {
 
-      memset(__afl_area_ptr, 0, MAP_SIZE);
+      memset(__afl_area_ptr, 0, MAP_SIZE * 2);
       __afl_area_ptr[0] = 1;
       __afl_prev_loc = 0;
     }

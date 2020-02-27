@@ -359,7 +359,7 @@ static const u8* main_payload_32 =
   "  .comm   __afl_temp, 4, 32\n"
   "\n"
   ".AFL_SHM_ENV:\n"
-  "  .asciz \"" SHM_ENV_VAR "\"\n"
+  "  .asciz \"" SHM_ENV_VAR1 "\"\n"
   "\n"
   "/* --- END --- */\n"
   "\n";
@@ -711,7 +711,7 @@ static const u8* main_payload_64 =
   "  .comm    __afl_global_area_ptr, 8, 8\n"
   "\n"
   ".AFL_SHM_ENV:\n"
-  "  .asciz \"" SHM_ENV_VAR "\"\n"
+  "  .asciz \"" SHM_ENV_VAR1 "\"\n"
   "\n"
   "/* --- END --- */\n"
   "\n";

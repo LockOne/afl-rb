@@ -108,20 +108,26 @@ bool AFLCoverage::runOnModule(Module &M) {
       new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
                          GlobalValue::ExternalLinkage, 0, "__afl_area_ptr");
 
+  GlobalVariable *AFLFuncMapPtr =
+      new GlobalVariable(M, PointerType::get(Int32Ty, 0), false,
+                         GlobalValue::ExternalLinkage, 0, "__afl_func_ptr");
+
   GlobalVariable *AFLPrevLoc = new GlobalVariable(
       M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_prev_loc",
       0, GlobalVariable::GeneralDynamicTLSModel, 0, false);
 
+  GlobalVariable *AFLFuncId =
+      new GlobalVariable(M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_func_id",
+      0, GlobalVariable::GeneralDynamicTLSModel, 0, false);
+
   std::ofstream func;
   func.open("FuncInfo.txt", std::ofstream::out | std::ofstream::app);
-  std::map<BasicBlock *, unsigned int> block_afl_map;
   std::vector<BasicBlock *> entryblocks;
   unsigned int total_bb_num = 0;
 
   /* Instrument all the things! */
   int inst_blocks = 0;
-  int func_num = 0;
-  std::cout << "Funcinfo functions : \n";
+  int func_id = 1;
   for (auto &F : M){
     int bb_num = 0;
     std::cout << F.getName().str() << " ";
@@ -133,13 +139,17 @@ bool AFLCoverage::runOnModule(Module &M) {
       BasicBlock::iterator IP = (*BB).getFirstInsertionPt();
       IRBuilder<> IRB(&(*IP));
 
+      if (&(*BB) == &F.getEntryBlock()){
+        IRB.CreateStore(ConstantInt::get(Int32Ty, func_id), AFLFuncId)
+           ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+      }
+
       if (AFL_R(100) >= inst_ratio) continue;
       bb_num ++;
       total_bb_num ++;
 
       /* Make up cur_loc */
       unsigned int cur_loc = AFL_R(MAP_SIZE);
-      block_afl_map.insert(std::make_pair(&(*BB), cur_loc));  //hack to get BB's id
 
       ConstantInt *CurLoc = ConstantInt::get(Int32Ty, cur_loc);
 
@@ -151,14 +161,20 @@ bool AFLCoverage::runOnModule(Module &M) {
       /* Load SHM pointer */
       LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
       MapPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-      Value *MapPtrIdx =
-          IRB.CreateGEP(MapPtr, IRB.CreateXor(PrevLocCasted, CurLoc));
+
+      LoadInst *FuncMapPtr = IRB.CreateLoad(AFLFuncMapPtr);
+      FuncMapPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+      Value *PtrIdx = IRB.CreateXor(PrevLocCasted, CurLoc);
+      Value *MapPtrIdx = IRB.CreateGEP(MapPtr, PtrIdx);
+      Value *FuncMapPtrIdx = IRB.CreateGEP(FuncMapPtr, PtrIdx);
 
       /* Update bitmap */
       LoadInst *Counter = IRB.CreateLoad(MapPtrIdx);
       Counter->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
       Value *Incr = IRB.CreateAdd(Counter, ConstantInt::get(Int8Ty, 1));
       IRB.CreateStore(Incr, MapPtrIdx)
+          ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+      IRB.CreateStore(IRB.CreateLoad(AFLFuncId), FuncMapPtrIdx)
           ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
 
       /* Set prev_loc to cur_loc >> 1 */
@@ -169,52 +185,9 @@ bool AFLCoverage::runOnModule(Module &M) {
       inst_blocks++;
     }
     std::cout << "BB num : " << bb_num << "\n";
-    if (bb_num >= 1) {func_num++;}
+    func_id++;
   }
 
-  //func << func_num << "\n";
-
-  for (auto &F : M) {
-    std::set<unsigned int> ids;
-    for (auto &BB : F) {
-      unsigned int cur_loc = block_afl_map.find(&BB) -> second;
-      for (succ_iterator succs = succ_begin(&BB); succs != succ_end(&BB); succs++){
-        unsigned int next_loc = block_afl_map.find(*succs) -> second;
-        unsigned int branch_id = (cur_loc >> 1) ^ next_loc;
-        ids.insert(branch_id);
-      }
-      TerminatorInst * BBt = BB.getTerminator();
-      if (BBt->getNumSuccessors() == 0){
-        if (BBt->isExceptional()){
-        } else if (isa<ReturnInst>(BBt)){
-          for(auto eB = entryblocks.begin(); eB != entryblocks.end(); eB++){
-            auto search = block_afl_map.find(*eB);
-            unsigned int next_loc = 0;
-            if (search == block_afl_map.end()){
-              std::cout << "can't find in block afl map\n";
-              continue;
-            } else {
-              next_loc = block_afl_map.find(*eB) -> second;
-            }
-            unsigned int branch_id = (cur_loc >> 1) ^ next_loc;
-            ids.insert(branch_id);
-          }
-        } else if (isa<IndirectBrInst>(BBt)) {
-          //std::cout << "indirect branch : no successor \n";
-        } else if (isa<UnreachableInst> (BBt)) {
-          //std::cout << "unreachable : no successor\n";
-        } else {
-          //std::cout << "Warning : no successor?\n";
-        }
-      }
-    }
-    if (ids.size() > 0){
-      func << ids.size() << ":" <<  F.getName().str() << "\n";
-      for (auto id= ids.begin(); id!=ids.end(); id++){
-        func << *id << "\n";
-      }
-    }
-  }
   func.close();
 
   /* Say something nice. */

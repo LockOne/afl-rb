@@ -31,7 +31,7 @@
 
 #define TOTAL_TIMEOUT 1000 * 60 * 60 * 24
 
-#define FUNC_TIMEOUT1 TOTAL_TIMEOUT * 0.3
+#define FUNC_TIMEOUT1 TOTAL_TIMEOUT * 0.2
 #define FUNC_TIMEOUT2 TOTAL_TIMEOUT * 0.5
 #define FUNC_TIMEOUT3 TOTAL_TIMEOUT * 0.7
 
@@ -277,7 +277,8 @@
 
 /* Environment variable used to pass SHM ID to the called program. */
 
-#define SHM_ENV_VAR         "__AFL_SHM_ID"
+#define SHM_ENV_VAR1        "__AFL_SHM_ID1"
+#define SHM_ENV_VAR2        "__AFL_SHM_ID2"
 
 /* Other less interesting, internal-only variables. */
 
@@ -326,7 +327,7 @@
    problems with complex programs). You need to recompile the target binary
    after changing this - otherwise, SEGVs may ensue. */
 
-#define MAP_SIZE_POW2       18
+#define MAP_SIZE_POW2       16
 #define MAP_SIZE            (1 << MAP_SIZE_POW2)
 
 /* Maximum allocator request size (keep well under INT_MAX): */

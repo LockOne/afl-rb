@@ -149,7 +149,7 @@ static void setup_shm(void) {
 
   shm_str = alloc_printf("%d", shm_id);
 
-  setenv(SHM_ENV_VAR, shm_str, 1);
+  setenv(SHM_ENV_VAR1, shm_str, 1);
 
   ck_free(shm_str);
 
