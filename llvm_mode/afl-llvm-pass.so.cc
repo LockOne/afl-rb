@@ -121,10 +121,9 @@ bool AFLCoverage::runOnModule(Module &M) {
   /* Instrument all the things! */
   int inst_blocks = 0;
   int func_num = 0;
-  std::cout << "Funcinfo functions : \n";
   for (auto &F : M){
     int bb_num = 0;
-    std::cout << F.getName().str() << " ";
+    //std::cout << F.getName().str() << " ";
     if (!F.empty()){
       entryblocks.push_back(&F.getEntryBlock());
     }
@@ -168,7 +167,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
       inst_blocks++;
     }
-    std::cout << "BB num : " << bb_num << "\n";
+    //std::cout << "BB num : " << bb_num << "\n";
     if (bb_num >= 1) {func_num++;}
   }
 
@@ -183,33 +182,9 @@ bool AFLCoverage::runOnModule(Module &M) {
         unsigned int branch_id = (cur_loc >> 1) ^ next_loc;
         ids.insert(branch_id);
       }
-      TerminatorInst * BBt = BB.getTerminator();
-      if (BBt->getNumSuccessors() == 0){
-        if (BBt->isExceptional()){
-        } else if (isa<ReturnInst>(BBt)){
-          for(auto eB = entryblocks.begin(); eB != entryblocks.end(); eB++){
-            auto search = block_afl_map.find(*eB);
-            unsigned int next_loc = 0;
-            if (search == block_afl_map.end()){
-              std::cout << "can't find in block afl map\n";
-              continue;
-            } else {
-              next_loc = block_afl_map.find(*eB) -> second;
-            }
-            unsigned int branch_id = (cur_loc >> 1) ^ next_loc;
-            ids.insert(branch_id);
-          }
-        } else if (isa<IndirectBrInst>(BBt)) {
-          //std::cout << "indirect branch : no successor \n";
-        } else if (isa<UnreachableInst> (BBt)) {
-          //std::cout << "unreachable : no successor\n";
-        } else {
-          //std::cout << "Warning : no successor?\n";
-        }
-      }
     }
     if (ids.size() > 0){
-      func << ids.size() << ":" <<  F.getName().str() << "\n";
+      func << ids.size() << ":" <<  F.getName().str() << ":" << F.size() << "\n";
       for (auto id= ids.begin(); id!=ids.end(); id++){
         func << *id << "\n";
       }
