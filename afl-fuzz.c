@@ -289,7 +289,9 @@ static u8* (*post_handler)(u8* buf, u32* len);
 
 struct func {
   unsigned int * branch_ids;
+  unsigned int * rel_funcs;
   unsigned int num_branch;
+  unsigned int num_rel_funcs;
   char name[100];
 }; 
 
@@ -315,6 +317,11 @@ static u32 cur_len;
 static FILE * mask_size_file = NULL;
 static FILE * rel_func_file = NULL; 
 static u32 hit_count = 0;
+static double hit_ratio = 0;
+static u32 skip_count = 0;
+static u32 skip_total_count = 0;
+static u32 skip_tmp_count = 0;
+static u32 try_count = 0;
 static u32 func_list_size = 0;
 static double func_rel_threshold = FUNC_REL_THRESHOLD1;
 /* @RB@ Things about branches */
@@ -806,9 +813,12 @@ void read_func_file(u8 * input_file){
   if (funcf == NULL) FATAL("Can't open given function info file");
   char func_name[100];
   u32 num_branch = 0;
+  u32 num_rel_funcs = 0;
   u32 func_idx = num_func;
-  u32 branch_idx = 0;
-  u8 func_flag = 1;
+  u32 bf_idx = 0;
+  u32 cur_fid;
+  u32 cur_bid;
+  u8 read_flag = 0; // 0 : func, 1 : rel func, 2 : branch func, 3 : branch id
   u8 idx = 0;
   if (func_list == NULL){
     func_list = (struct func **) malloc (sizeof(struct func *) * 100);
@@ -1188,8 +1198,6 @@ static u32 count_bytes(u8* mem);
 static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
 
   struct queue_entry* q = ck_alloc(sizeof(struct queue_entry));
-  u32 i,j;
-
   // @RB@ added these for every queue entry
   q->trace_mini = ck_alloc(MAP_SIZE >> 3);
   minimize_bits(q->trace_mini, trace_bits);
@@ -1224,6 +1232,7 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
 
   last_path_time = get_cur_time();
 
+  /*
   if (func_exec_table){
     for (i = 0; i < (num_func / 8 + 1); i ++){
       func_exec_list[i] = 0;
@@ -1263,6 +1272,7 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
       }
     }
   }
+  */
 }
 
 
@@ -4362,7 +4372,7 @@ static void show_stats(void) {
 
   if (delta_ms > 10 * 60 * 1000) run_over10m = 1;
 
-  if (delta_ms > TOTAL_TIMEOUT) stop_soon = 1;
+  if (delta_ms > TOTAL_TIMEOUT) stop_soon = 2;
 
   if (func_file && func_status == 0 && delta_ms > FUNC_TIMEOUT1)
     {func_status = 1; func_rel_threshold = FUNC_REL_THRESHOLD1;}
@@ -4604,7 +4614,7 @@ static void show_stats(void) {
      sprintf(tmp, "%u", num_rel_func);
      SAYF("  # of rel func : " cRST "%-21s " bSTG bV "\n", tmp);
      
-     sprintf(tmp, "%u/%u", hit_count,num_rel_branch);
+     sprintf(tmp, "%u/%u (%0.02f%%)", hit_count,num_rel_branch, hit_ratio * 100);
      SAYF(bV bSTOP " rel branch hit  : " cRST "%-17s " bSTG bV bSTOP,tmp);
      sprintf(tmp, "%u", func_status);
      SAYF(" func status    : " cRST "%-21s " bSTG bV "\n",tmp);
@@ -4755,19 +4765,21 @@ static void show_stats(void) {
        "  imported : " cRST "%-10s " bSTG bV "\n", tmp,
        sync_id ? DI(queued_imported) : (u8*)"n/a");
 
-  sprintf(tmp, "%s/%s, %s/%s",
+  sprintf(tmp, "%s/%s, %s/%s, %s/%s:%s",
           DI(stage_finds[STAGE_HAVOC]), DI(stage_cycles[STAGE_HAVOC]),
-          DI(stage_finds[STAGE_SPLICE]), DI(stage_cycles[STAGE_SPLICE]));
+          DI(stage_finds[STAGE_SPLICE]), DI(stage_cycles[STAGE_SPLICE]), DI(skip_count), DI(try_count), DI(skip_total_count));
 
-  SAYF(bV bSTOP "       havoc : " cRST "%-37s " bSTG bV bSTOP, tmp);
+  //SAYF(bV bSTOP "       havoc : " cRST "%-37s " bSTG bV bSTOP, tmp);
+  SAYF(bV bSTOP "       havoc : " cRST "%-50s " bSTG bV bSTOP bSTG bV "\n", tmp);
 
+  /*
   if (t_bytes) sprintf(tmp, "%0.02f%%", stab_ratio);
     else strcpy(tmp, "n/a");
 
   SAYF(" stability : %s%-10s " bSTG bV "\n", (stab_ratio < 85 && var_byte_count > 40) 
        ? cLRD : ((queued_variable && (!persistent_mode || var_byte_count > 20))
        ? cMGN : cRST), tmp);
-
+*/
   if (!bytes_trim_out) {
 
     sprintf(tmp, "n/a, ");
@@ -5567,7 +5579,7 @@ static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
 
 static u8 fuzz_one(char** argv) {
 
-  s32 len, fd, temp_len, i, j;
+  s32 len, fd, temp_len, i, j, k;
   u8  *in_buf, *out_buf, *orig_in, *ex_tmp, *eff_map = 0;
   u64 havoc_queued,  orig_hit_cnt, new_hit_cnt;
   u32 splice_cycle = 0, perf_score = 100, orig_perf, prev_cksum, eff_cnt = 1;
@@ -6099,8 +6111,8 @@ skip_simple_bitflip:
 
   orig_hit_cnt = new_hit_cnt;
 
-  max_branch_mask = 0;
-  min_branch_mask = ~0;
+  max_branch_mask = 0.0;
+  min_branch_mask = 1.0;
 
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
 
@@ -6159,7 +6171,6 @@ skip_simple_bitflip:
     out_buf[stage_cur] ^= 0xFF;
 
   }
-
   if(func_status){
     mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
     for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
@@ -6169,8 +6180,8 @@ skip_simple_bitflip:
       } 
     }
     max_branch_mask = 0;
-    min_branch_mask = ~0;
-    memset(tmp_branch_mask,0, sizeof(u32) * (len+1));
+    min_branch_mask = 1.0;
+    memset(tmp_branch_mask,0, sizeof(double) * (len+1));
   }
 
   /* If the effector map is more than EFF_MAX_PERC dense, just flag the
@@ -6220,11 +6231,17 @@ skip_simple_bitflip:
       /* if even with this byte deleted we hit the branch, can delete here */
       if (func_status){
         u32 idx;
+        u32 trace_count = 0;
         hit_count = 0;
-        for (idx = 0; idx < MAP_SIZE ; idx++){
-          if(unlikely(trace_bits[idx])){
-            if(rel_branch_map[idx]){
-              hit_count ++;
+     //   if (trace_bits[rb_fuzzing-1] != 0){
+
+          tmp_branch_mask2[stage_cur] = trace_bits[rb_fuzzing-1] != 0;
+          for (idx = 0; idx < MAP_SIZE ; idx++){
+            if(unlikely(trace_bits[idx])){
+              trace_count ++;
+              if(rel_branch_map[idx]){
+                hit_count ++;
+              }
             }
           }
         }
@@ -6249,8 +6266,8 @@ skip_simple_bitflip:
         } 
       }
       max_branch_mask = 0;
-      min_branch_mask = ~0;
-      memset(tmp_branch_mask,0, sizeof(u32) * (len+1));
+      min_branch_mask = 1.0;
+      memset(tmp_branch_mask,0, sizeof(double) * (len+1));
     }
     
    // check if we can add at this byte
@@ -6270,11 +6287,17 @@ skip_simple_bitflip:
       /* if adding before still hit branch, can add */
       if (func_status){
         u32 idx;
+        u32 trace_count = 0;
         hit_count = 0;
-        for (idx = 0; idx < MAP_SIZE ; idx++){
-          if(unlikely(trace_bits[idx])){
-            if(rel_branch_map[idx]){
-              hit_count ++;
+ //       if (trace_bits[rb_fuzzing -1] != 0){
+
+          tmp_branch_mask2[stage_cur] = trace_bits[rb_fuzzing-1] != 0;
+          for (idx = 0; idx < MAP_SIZE ; idx++){
+            if(unlikely(trace_bits[idx])){
+              trace_count ++;
+              if(rel_branch_map[idx]){
+                hit_count ++;
+              }
             }
           }
         }
@@ -6289,6 +6312,7 @@ skip_simple_bitflip:
         }
       }
     }
+    //fprintf(tmp_log_file,"\n");
 
     if (func_status){
       mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
@@ -6306,7 +6330,7 @@ skip_simple_bitflip:
     memcpy (orig_branch_mask, branch_mask, len + 1);
   }
 
-  fprintf(mask_size_file, "%0.1f/%u\n",(double) mask_size/ 3.0, cur_len);
+  if(mask_size_file) fprintf(mask_size_file, "%0.1f/%u\n",(double) mask_size/ 3.0, cur_len);
 
   if (rb_fuzzing && (mask_size == 0)){
     if (blacklist_pos >= blacklist_size -1){
@@ -7260,10 +7284,12 @@ havoc_stage:
     sprintf(tmp, "splice %u", splice_cycle);
     stage_name  = tmp;
     stage_short = "splice";
-    stage_max   = SPLICE_HAVOC * perf_score / havoc_div / 100;
+    stage_max   = (func_start ? SPLICE_HAVOC_REL : SPLICE_HAVOC) * perf_score / havoc_div / 100;
 
   }
 
+  
+  
   if (stage_max < HAVOC_MIN) stage_max = HAVOC_MIN;
 
   temp_len = len;
@@ -7281,6 +7307,7 @@ havoc_stage:
     u32 posn;
 
     stage_cur_val = use_stacking;
+    skip_tmp_count = skip_count;
  
     for (i = 0; i < use_stacking; i++) {
 
@@ -7290,7 +7317,7 @@ havoc_stage:
 
           /* Flip a single bit somewhere. Spooky! */
 
-          if((posn = get_random_modifiable_posn(1, 1, temp_len, branch_mask, position_map)) == 0xffffffff) break;
+          if((posn = get_random_modifiable_posn(1, 1, temp_len, branch_mask, position_map)) == 0xffffffff) {skip_count ++;if (func_start) i--; break;}
           FLIP_BIT(out_buf, posn);
 
           break;
@@ -7299,7 +7326,7 @@ havoc_stage:
 
           /* Set byte to interesting value. */
 
-          if((posn = get_random_modifiable_posn(8, 1, temp_len, branch_mask, position_map)) == 0xffffffff) break;
+          if((posn = get_random_modifiable_posn(8, 1, temp_len, branch_mask, position_map)) == 0xffffffff) {skip_count ++;if (func_start) i--;break;}
           out_buf[posn] = interesting_8[UR(sizeof(interesting_8))];
           break;
 
@@ -7309,7 +7336,7 @@ havoc_stage:
 
           if (temp_len < 2) break;
 
-          if((posn = get_random_modifiable_posn(16, 1, temp_len, branch_mask, position_map)) == 0xffffffff) break;
+          if((posn = get_random_modifiable_posn(16, 1, temp_len, branch_mask, position_map)) == 0xffffffff) {skip_count ++;if (func_start) i--;break;}
           if (UR(2)) {
 
             *(u16*)(out_buf + posn) =
@@ -7330,7 +7357,7 @@ havoc_stage:
 
           if (temp_len < 4) break;
 
-          if((posn = get_random_modifiable_posn(32, 1, temp_len, branch_mask, position_map)) == 0xffffffff) break;
+          if((posn = get_random_modifiable_posn(32, 1, temp_len, branch_mask, position_map)) == 0xffffffff) {skip_count ++;if (func_start) i--; break;}
           if (UR(2)) {
   
             *(u32*)(out_buf + posn) =
@@ -7350,7 +7377,7 @@ havoc_stage:
 
           /* Randomly subtract from byte. */
 
-          if((posn = get_random_modifiable_posn(8, 1, temp_len, branch_mask, position_map)) == 0xffffffff) break;
+          if((posn = get_random_modifiable_posn(8, 1, temp_len, branch_mask, position_map)) == 0xffffffff) {skip_count ++;if (func_start) i--;break;}
           out_buf[posn] -= 1 + UR(ARITH_MAX);
           break;
 
@@ -7358,7 +7385,7 @@ havoc_stage:
 
           /* Randomly add to byte. */
 
-          if((posn = get_random_modifiable_posn(8, 1, temp_len, branch_mask, position_map)) == 0xffffffff) break;
+          if((posn = get_random_modifiable_posn(8, 1, temp_len, branch_mask, position_map)) == 0xffffffff) {skip_count ++;if (func_start) i--;break;}
           out_buf[posn] += 1 + UR(ARITH_MAX);
           break;
 
@@ -7368,7 +7395,7 @@ havoc_stage:
 
           if (temp_len < 2) break;
 
-          if((posn = get_random_modifiable_posn(16, 1, temp_len, branch_mask, position_map)) == 0xffffffff) break;
+          if((posn = get_random_modifiable_posn(16, 1, temp_len, branch_mask, position_map)) == 0xffffffff) {skip_count ++;if (func_start) i--;break;}
 
           if (UR(2)) {
 
@@ -7391,7 +7418,7 @@ havoc_stage:
 
           if (temp_len < 2) break;
 
-          if((posn = get_random_modifiable_posn(16, 1, temp_len, branch_mask, position_map)) == 0xffffffff) break;
+          if((posn = get_random_modifiable_posn(16, 1, temp_len, branch_mask, position_map)) == 0xffffffff) {skip_count ++;if (func_start) i--;break;}
 
           if (UR(2)) {
 
@@ -7414,7 +7441,7 @@ havoc_stage:
 
           if (temp_len < 4) break;
 
-          if((posn = get_random_modifiable_posn(32, 1, temp_len, branch_mask, position_map)) == 0xffffffff) break;
+          if((posn = get_random_modifiable_posn(32, 1, temp_len, branch_mask, position_map)) == 0xffffffff) {skip_count ++;if (func_start) i--;break;}
 
           if (UR(2)) {
 
@@ -7437,7 +7464,7 @@ havoc_stage:
 
           if (temp_len < 4) break;
 
-          if((posn = get_random_modifiable_posn(32, 1, temp_len, branch_mask, position_map)) == 0xffffffff) break;
+          if((posn = get_random_modifiable_posn(32, 1, temp_len, branch_mask, position_map)) == 0xffffffff) {skip_count ++;if (func_start) i--;break;}
 
           if (UR(2)) {
 
@@ -7460,7 +7487,7 @@ havoc_stage:
              why not. We use XOR with 1-255 to eliminate the
              possibility of a no-op. */
 
-          if((posn = get_random_modifiable_posn(8, 1, temp_len, branch_mask, position_map)) == 0xffffffff) break;
+          if((posn = get_random_modifiable_posn(8, 1, temp_len, branch_mask, position_map)) == 0xffffffff) {skip_count ++;if (func_start) i--;break;}
           out_buf[posn] ^= 1 + UR(255);
           break;
 
@@ -7480,7 +7507,7 @@ havoc_stage:
             del_len = choose_block_len(temp_len - 1);
 
             del_from = get_random_modifiable_posn(del_len*8, 2, temp_len, branch_mask, position_map);
-            if (del_from == 0xffffffff) break;
+            if (del_from == 0xffffffff) {skip_count ++;if (func_start) i--;break;}
 
             memmove(out_buf + del_from, out_buf + del_from + del_len,
                     temp_len - del_from - del_len);
@@ -7517,7 +7544,7 @@ havoc_stage:
 
             clone_to   = get_random_insert_posn(temp_len, branch_mask, position_map);
    
-            if (clone_to == 0xffffffff) break; // this shouldn't happen, probably...
+            if (clone_to == 0xffffffff) {skip_count ++;if (func_start) i--;break;} // this shouldn't happen, probably...
 
             new_buf = ck_alloc_nozero(temp_len + clone_len);
             new_branch_mask = alloc_branch_mask(temp_len + clone_len + 1);
@@ -7570,7 +7597,7 @@ havoc_stage:
 
             copy_to   = get_random_modifiable_posn(copy_len * 8, 1, temp_len, branch_mask, position_map);
 
-            if (copy_to == 0xffffffff) break;
+            if (copy_to == 0xffffffff) {skip_count ++;if (func_start) i--;break;}
 
             if (UR(4)) {
 
@@ -7603,7 +7630,7 @@ havoc_stage:
               if (extra_len > temp_len) break;
 
               insert_at = get_random_modifiable_posn(extra_len * 8, 1, temp_len, branch_mask, position_map);
-              if (insert_at == 0xffffffff) break;
+              if (insert_at == 0xffffffff) {skip_count ++;if (func_start) i--;break;}
 
               memcpy(out_buf + insert_at, a_extras[use_extra].data, extra_len);
 
@@ -7619,7 +7646,7 @@ havoc_stage:
 
 
               insert_at = get_random_modifiable_posn(extra_len * 8, 1, temp_len, branch_mask, position_map);
-              if (insert_at == 0xffffffff) break;
+              if (insert_at == 0xffffffff) {skip_count ++;if (func_start) i--;break;}
 
               memcpy(out_buf + insert_at, extras[use_extra].data, extra_len);
 
@@ -7632,7 +7659,7 @@ havoc_stage:
         case 16: {
 
             u32 use_extra, extra_len, insert_at = get_random_insert_posn(temp_len, branch_mask, position_map);
-             if (insert_at == 0xffffffff) break;
+             if (insert_at == 0xffffffff) {skip_count ++;if (func_start) i--;break;}
             u8* new_buf, * new_branch_mask;
 
             /* Insert an extra. Do the same dice-rolling stuff as for the
@@ -7702,6 +7729,8 @@ havoc_stage:
       }
 
     }
+    try_count += use_stacking;
+    skip_total_count += (use_stacking + skip_tmp_count == skip_count)? 1 : 0;
 
     if (common_fuzz_stuff(argv, out_buf, temp_len))
       goto abandon_entry;
@@ -8492,6 +8521,14 @@ EXP_ST void setup_dirs_fds(void) {
 
   mask_size_file = fdopen(fd, "w");
   if (!mask_size_file) PFATAL("fdopen() failed");
+
+  tmp = alloc_printf("%s/tmp.log", out_dir);
+  fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  if (fd < 0) PFATAL("Unable to create '%s'", tmp);
+  ck_free(tmp);
+  
+  tmp_log_file = fdopen(fd, "w");
+  if(!tmp_log_file) PFATAL("fdopen() failed");
 }
 
 
@@ -9303,6 +9340,8 @@ int main(int argc, char** argv) {
       printf("\n");
     }
     */
+    
+    /*
     func_exec_table = (u32 **) malloc (sizeof(u32*) * num_func + sizeof(u32) * num_func * num_func);
     if (func_exec_table == NULL) FATAL("malloc failed");
     memset(func_exec_table, 0, sizeof(u32*) * num_func + sizeof(u32) * num_func * num_func);
@@ -9320,6 +9359,7 @@ int main(int argc, char** argv) {
     for (idx = 0; idx < num_func ; idx++){
       func_exec_table[idx] = ptr2 + num_func * idx;
     }
+    */
   }
 
   setup_dirs_fds();
@@ -9365,6 +9405,25 @@ int main(int argc, char** argv) {
     start_time += 4000;
     if (stop_soon) goto stop_fuzzing;
   }
+
+  //debug
+  /*
+  if (func_file){
+    u32 idx, idx2;
+    u64 num_hash = 0;
+    for (idx = 0; idx < MAP_SIZE; idx++){
+     for (idx2 = 0; idx2 < 10; idx2++){
+       if (bid_func_map[idx][idx2] == 0) break;
+       num_hash ++;
+     }
+    }
+    char * tmppp = alloc_printf("%s/bid_hash.log", out_dir);
+    FILE * tmpf = fopen(tmppp, "w"); 
+    ck_free(tmppp);
+    fprintf(tmpf, "%u/%u (%lf)", num_hash, MAP_SIZE, (double) num_hash / MAP_SIZE );
+    fclose(tmpf);
+  }
+  */
 
   while (1) {
 
@@ -9454,11 +9513,17 @@ stop_fuzzing:
 
   }
   if (func_file){
-    if (func_list){
+    if (func_list != NULL){
+     
       u32 idx1;
       for (idx1 = 0; idx1 < num_func; idx1++){
-        free(func_list[idx1] -> branch_ids);
-        free(func_list[idx1]);
+        if (func_list[idx1] != NULL){
+          if (func_list[idx1] -> branch_ids != NULL)
+            free(func_list[idx1] -> branch_ids);
+          if (func_list[idx1] -> rel_funcs != NULL)
+            free(func_list[idx1] -> rel_funcs);
+          free(func_list[idx1]);
+        }
       }
       free(func_list);
     }
@@ -9498,7 +9563,8 @@ stop_fuzzing:
 
   dump_to_logs();
   fclose(plot_file);
-  fclose(mask_size_file);
+  if(mask_size_file) fclose(mask_size_file);
+  if (tmp_log_file) fclose(tmp_log_file);
   ck_free(blacklist);
   destroy_queue();
   destroy_extras();

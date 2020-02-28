@@ -89,7 +89,7 @@
 /* Baseline number of random tweaks during a single 'havoc' stage: */
 
 #define HAVOC_CYCLES        256
-#define HAVOC_CYCLES_REL    256
+#define HAVOC_CYCLES_REL    320
 #define HAVOC_CYCLES_INIT   1024
 
 /* Maximum multiplier for the above (should be a power of two, beware
@@ -138,6 +138,7 @@
 /* Nominal per-splice havoc cycle length: */
 
 #define SPLICE_HAVOC        32
+#define SPLICE_HAVOC_REL        32
 
 /* Maximum offset for integer addition / subtraction stages: */
 
@@ -326,7 +327,7 @@
    problems with complex programs). You need to recompile the target binary
    after changing this - otherwise, SEGVs may ensue. */
 
-#define MAP_SIZE_POW2       18
+#define MAP_SIZE_POW2       16
 #define MAP_SIZE            (1 << MAP_SIZE_POW2)
 
 /* Maximum allocator request size (keep well under INT_MAX): */
