@@ -124,26 +124,16 @@ bool AFLCoverage::runOnModule(Module &M) {
   std::ofstream func;
   func.open("FuncInfo.txt", std::ofstream::out | std::ofstream::app);
   std::map<BasicBlock *, unsigned int> block_afl_map;
-  std::vector<BasicBlock *> entryblocks;
-  unsigned int total_bb_num = 0;
 
   /* Instrument all the things! */
   int inst_blocks = 0;
-  int func_num = 0;
   for (auto &F : M){
-    int bb_num = 0;
     //std::cout << F.getName().str() << " ";
-    if (!F.empty()){
-      entryblocks.push_back(&F.getEntryBlock());
-    }
-    std::vector<Function *> succ_funcs;
     for (auto BB = F.begin() ; BB != F.end() ; BB++) {
       BasicBlock::iterator IP = (*BB).getFirstInsertionPt();
       IRBuilder<> IRB(&(*IP));
 
       if (AFL_R(100) >= inst_ratio) continue;
-      bb_num ++;
-      total_bb_num ++;
 
       /* Make up cur_loc */
       unsigned int cur_loc = AFL_R(MAP_SIZE);
@@ -175,48 +165,12 @@ bool AFLCoverage::runOnModule(Module &M) {
       Store->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
 
       inst_blocks++;
-      for (auto inst = (*BB).begin(); inst != (*BB).end(); inst ++){
-         if (isa<CallInst>(&(*inst)) || isa<InvokeInst>(&(*inst))){
-           CallSite cs = CallSite(&(*inst));
-           Function * succ = cs.getCalledFunction();
-           succ_funcs.push_back(succ);
-         }
-      }
-    }
-    if (bb_num >= 1) {
-      FuncInfo _funcinfo;
-      _funcinfo.func = &F;
-      for (auto f = succ_funcs.begin(); f != succ_funcs.end(); f++){
-        _funcinfo.successors.push_back(*f);
-      } 
-      func_infos.push_back(_funcinfo);
-    }
-    //std::cout << "BB num : " << bb_num << "\n";
-    if (bb_num >= 1) {func_num++;}
-  }
-
-  std::map<Function *, unsigned int> func_ids;
-  unsigned int func_idx = 0;
-
-  for (auto fi = func_infos.begin(); fi != func_infos.end(); fi ++){
-    Function * predecessor = fi->func;
-    func_ids.insert(std::make_pair(predecessor, func_idx));
-    func_idx++;
-    for (auto sf = fi->successors.begin() ; sf != fi->successors.end(); sf++){
-      for (auto fi2 = func_infos.begin(); fi2 != func_infos.end(); fi2++){
-        if (fi2->func == *sf){
-          fi2->predecessors.push_back(predecessor);
-          break;
-        }
-      }
     }
   }
 
-  for (auto fi = func_infos.begin(); fi != func_infos.end(); fi++){
-    Function * cur_func = fi->func;
+  for (auto &F : M){
     std::set<unsigned int> ids;
-    //if (cur_func->getName() == "main") continue;
-    for (auto &BB : *cur_func) {
+    for (auto &BB : F) {
       unsigned int cur_loc = block_afl_map.find(&BB) -> second;
       for (succ_iterator succs = succ_begin(&BB); succs != succ_end(&BB); succs++){
         unsigned int next_loc = block_afl_map.find(*succs) -> second;
@@ -230,19 +184,7 @@ bool AFLCoverage::runOnModule(Module &M) {
         func << *id << "\n";
       }
     }
-    func << rel_funcs.size() << ":" << fi->func->getName().str() << "\n"; //log to keep func id
-    if (rel_funcs.size() != 0){
-    func << func_ids.find(fi->func)-> second << "\n";
-    for (auto rf = rel_funcs.begin() ; rf != rel_funcs.end() ; rf ++){
-      func << func_ids.find(*rf)-> second << "\n";
-    }
-    func << ids.size() << ":" <<  fi->func->getName().str() << "\n";
-    for (auto id= ids.begin(); id!=ids.end(); id++){
-      func << *id << "\n";
-    }
-    }
   }
-  
   func.close();
 
   /* Say something nice. */
