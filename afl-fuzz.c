@@ -297,8 +297,9 @@ static struct func ** func_list = NULL;
 static u32 ** func_exec_table = NULL;
 static u8 * func_exec_list = NULL;
 static u32 * func_exec_ids = NULL;
-static u64 * func_exec_hash = NULL;
+static u8 ** func_exec_hash = NULL;
 static u32 num_hash = 0;
+static u32 hash_size = 400;
 static u32 func_exec_hash_size = 100;
 static u32 func_exec_cur_id = 0;
 static double * func_rel_table = NULL;
@@ -1251,23 +1252,32 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
         }
       }
     }
-    u64 hash = 0;
+    u8* hash = (u8*) malloc (sizeof(u8) * hash_size);
+    memset(hash,0, sizeof(u8) * hash_size);
     for (i = 0; i < num_func ; i ++){
       if (func_exec_list[i / 8] & (1 << (i % 8))){
         if (func_exec_ids[i] == 0xffffffff){
           func_exec_ids[i] = func_exec_cur_id++;
-          hash |= 1 << ((func_exec_cur_id - 1) % 64);
+          hash[((func_exec_cur_id -1) % (hash_size * 8)) / 8] |= 1 << ((func_exec_cur_id - 1) % 8);
         } else {
-          hash |= 1 << (func_exec_ids[i] % 64);
+
+          hash[(func_exec_ids[i] % (hash_size * 8)) / 8] |= 1 << (func_exec_ids[i] % 8);
         }
       }
     }
     for (i = 0; i < num_hash ; i++){
-      if (hash == func_exec_hash[i]) { return;}
+      u8 same = 1;
+      for (j = 0; j < hash_size ; j++){
+        if (func_exec_hash[i][j] != hash[j]){
+          same = 0;
+          break;
+        }
+      }
+      if (same) {free(hash); return ;}
     }
     func_exec_hash[num_hash++] = hash;
     if (num_hash == func_exec_hash_size) {
-      func_exec_hash = (u64 *) realloc(func_exec_hash, sizeof(u64) * (func_exec_hash_size + 100));
+      func_exec_hash = (u8 **) realloc(func_exec_hash, sizeof(u8*) * (func_exec_hash_size + 100));
       func_exec_hash_size += 100;
     } 
     for (i = 0; i < num_func ; i++){
@@ -9324,12 +9334,12 @@ int main(int argc, char** argv) {
     memset(func_exec_table, 0, sizeof(u32*) * num_func + sizeof(u32) * num_func * num_func);
     func_exec_list = (u8 *) malloc(sizeof (u8) * (num_func / 8 + 1));
     func_exec_ids = (u32 *) malloc(sizeof (u32) * num_func);
-    func_exec_hash = (u64 * ) malloc(sizeof (u64) * func_exec_hash_size);
+    func_exec_hash = (u8** ) malloc(sizeof (u8*) * func_exec_hash_size);
     if (func_exec_list == NULL) FATAL("malloc failed");
     if (func_exec_ids == NULL) FATAL("malloc failed");
     if (func_exec_hash == NULL) FATAL("malloc failed");
-    memset(func_exec_ids,255,sizeof(u32) * num_func);
-    memset(func_exec_hash,0,sizeof(u64) * func_exec_hash_size);
+    memset(func_exec_ids,0xff,sizeof(u32) * num_func);
+    memset(func_exec_hash,0,sizeof(u8*) * func_exec_hash_size);
     func_rel_table = (double *) malloc(sizeof (double) * num_func);
     if (func_rel_table == NULL) FATAL("malloc failed");
     u32 * ptr2 = (u32 *) (func_exec_table + num_func);
@@ -9381,25 +9391,6 @@ int main(int argc, char** argv) {
     start_time += 4000;
     if (stop_soon) goto stop_fuzzing;
   }
-
-  //debug
-  /*
-  if (func_file){
-    u32 idx, idx2;
-    u64 num_hash = 0;
-    for (idx = 0; idx < MAP_SIZE; idx++){
-     for (idx2 = 0; idx2 < 10; idx2++){
-       if (bid_func_map[idx][idx2] == 0) break;
-       num_hash ++;
-     }
-    }
-    char * tmppp = alloc_printf("%s/bid_hash.log", out_dir);
-    FILE * tmpf = fopen(tmppp, "w"); 
-    ck_free(tmppp);
-    fprintf(tmpf, "%u/%u (%lf)", num_hash, MAP_SIZE, (double) num_hash / MAP_SIZE );
-    fclose(tmpf);
-  }
-  */
 
   while (1) {
 
@@ -9505,6 +9496,17 @@ stop_fuzzing:
       fprintf(rel_func_file,"\n");
     }
     fclose(rel_func_file);
+
+    /*
+    fn = alloc_printf("%s/hash_list.csv", out_dir);
+    FILE * hash_file = fopen(fn, "w");
+    ck_free(fn);
+    for (idx1 = 0; idx1 < num_hash; idx1++){
+      fprintf(hash_file, "%lu,", func_exec_hash[idx1]);
+    }
+    fclose(hash_file);
+    */
+
     if (func_list != NULL){
       u32 idx1;
       for (idx1 = 0; idx1 < num_func; idx1++){
@@ -9519,7 +9521,12 @@ stop_fuzzing:
     if (func_exec_table) free(func_exec_table);
     if (func_exec_list) free(func_exec_list);
     if (func_exec_ids) free(func_exec_ids);
-    if (func_exec_hash) free(func_exec_hash);
+    if (func_exec_hash) {
+      for (idx1 = 0; idx1 < num_hash; idx1++){
+        free(func_exec_hash[idx1]);
+      }
+      free(func_exec_hash);
+    }
   }
 
   u8 * fnn = alloc_printf("%s/branch_map.log", out_dir);
