@@ -316,6 +316,9 @@ static u8 skip_deterministic_bootstrap = 0;
 
 static int trim_for_branch = 0;
 
+static u32 mask_size;
+static FILE * mask_size_file = NULL;
+
 
 /* Interesting values, as per config.h */
 
@@ -5425,6 +5428,7 @@ static u8 fuzz_one(char** argv) {
   u32 orig_queued_discovered = queued_discovered;
   u32 orig_total_execs = total_execs;
   
+  mask_size = 0;
 
   if (!vanilla_afl){
     if (prev_cycle_wo_new && bootstrap){
@@ -5899,6 +5903,7 @@ skip_simple_bitflip:
     if (rb_fuzzing && !shadow_mode && use_branch_mask > 0)
       if (hits_branch(rb_fuzzing - 1)){
         branch_mask[stage_cur] = 1;
+        mask_size += 1;
      }
 
     /* We also use this stage to pull off a simple trick: we identify
@@ -5975,6 +5980,7 @@ skip_simple_bitflip:
       /* if even with this byte deleted we hit the branch, can delete here */
       if (hits_branch(rb_fuzzing - 1)){
         branch_mask[stage_cur] += 2;
+        mask_size += 1;
       }
     }
 
@@ -5994,6 +6000,7 @@ skip_simple_bitflip:
       /* if adding before still hit branch, can add */
       if (hits_branch(rb_fuzzing - 1)){
         branch_mask[stage_cur] += 4;
+        mask_size++;
       }
 
     }
@@ -6002,6 +6009,8 @@ skip_simple_bitflip:
     // save the original branch mask for after the havoc stage 
     memcpy (orig_branch_mask, branch_mask, len + 1);
   }
+
+  if(mask_size_file) fprintf(mask_size_file, "%0.1f/%u\n", (double) mask_size/ 3.0, len);
 
   if (rb_fuzzing && (successful_branch_tries == 0)){
     if (blacklist_pos >= blacklist_size -1){
@@ -8180,6 +8189,13 @@ EXP_ST void setup_dirs_fds(void) {
                      "pending_total, pending_favs, map_size, unique_crashes, "
                      "unique_hangs, max_depth, execs_per_sec\n");
                      /* ignore errors */
+  tmp = alloc_printf("%s/mask_size.log", out_dir);
+  fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  if (fd < 0) PFATAL("Unable to create '%s'", tmp);
+  ck_free(tmp);
+
+  mask_size_file = fdopen(fd, "w");
+  if (!mask_size_file) PFATAL ("fdopen() failed");
 
 }
 
@@ -9103,6 +9119,7 @@ stop_fuzzing:
   destroy_extras();
   ck_free(target_path);
   ck_free(sync_id);
+  if (mask_size_file) fclose(mask_size_file);
 
   alloc_report();
 
