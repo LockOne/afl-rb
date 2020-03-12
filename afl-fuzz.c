@@ -241,7 +241,7 @@ struct queue_entry {
 
   u8  cal_failed,                     /* Calibration failed?              */
       trim_done,                      /* Trimmed?                         */
-      was_fuzzed,                     /* Had any fuzzing done yet?        */
+      //was_fuzzed,                     /* Had any fuzzing done yet?        */
       passed_det,                     /* Deterministic stages passed?     */
       has_new_cov,                    /* Triggers new coverage?           */
       var_behavior,                   /* Variable behavior?               */
@@ -249,6 +249,8 @@ struct queue_entry {
       fs_redundant;                   /* Marked as redundant in the fs?   */
 
   u32 bitmap_size,                    /* Number of bits set in bitmap     */
+      num_fuzzed,                     /* Number of fuzzed time            */
+      mask_size,                      /* Recent fuzzed mask size          */
       exec_cksum;                     /* Checksum of the execution trace  */
 
   u64 exec_us,                        /* Execution time (us)              */
@@ -1214,6 +1216,8 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   q->len          = len;
   q->depth        = cur_depth + 1;
   q->passed_det   = passed_det;
+  q->num_fuzzed   = 0;
+  q->mask_size    = 0;
 
   if (q->depth > max_depth) max_depth = q->depth;
 
@@ -1791,7 +1795,7 @@ static void cull_queue(void) {
       top_rated[i]->favored = 1;
       queued_favored++;
 
-      if (!top_rated[i]->was_fuzzed) pending_favored++;
+      if (!top_rated[i]->num_fuzzed) pending_favored++;
 
     }
 
@@ -4638,6 +4642,9 @@ static void show_stats(void) {
   SAYF(bV bSTOP " cur bitmap size : " cRST "%-17s " bSTG bV bSTOP,tmp);
   sprintf(tmp, "%u", num_hash);
   SAYF(" Func Rel TCs  : "  cRST "%-21s " bSTG bV "\n", tmp);
+
+  sprintf(tmp, "%u", queue_cur->num_fuzzed);
+  SAYF(bV bSTOP " cur num fuzzed : " cRST "%-17s " bSTG bV bSTOP "              " bSTG bV "\n", tmp);
  
   sprintf(tmp, "%s (%0.02f%%)", DI(cur_skipped_paths),
           ((double)cur_skipped_paths * 100) / queued_paths);
@@ -5585,7 +5592,6 @@ static u8 fuzz_one(char** argv) {
   s32 len, fd, temp_len, i, j;
   u8  *in_buf, *out_buf, *orig_in, *ex_tmp, *eff_map = 0;
   u64 havoc_queued,  orig_hit_cnt, new_hit_cnt;
-  u64 delta_ms = get_cur_time() - start_time;
   u32 splice_cycle = 0, perf_score = 100, orig_perf, prev_cksum, eff_cnt = 1;
 
   u8  ret_val = 1, doing_det = 0;
@@ -5629,14 +5635,12 @@ static u8 fuzz_one(char** argv) {
   skip_simple_bitflip = 1;
  }
 
- 
- if (func_file && func_status == 0 && delta_ms > FUNC_TIMEOUT1)
-   {func_status = 1; func_rel_threshold = FUNC_REL_THRESHOLD1;}
- else if (func_status == 1 && delta_ms > FUNC_TIMEOUT2)
-   {func_status = 2; func_rel_threshold = FUNC_REL_THRESHOLD2;}
- else if (func_status == 2 && delta_ms > FUNC_TIMEOUT3)
-   {func_status = 3; func_rel_threshold = FUNC_REL_THRESHOLD3;}
-
+ if (func_file){
+ if (queue_cur-> num_fuzzed >= FUNC_LONG_FUZZ1) {func_status = 0; func_rel_threshold = FUNC_REL_THRESHOLD1;}
+   else if (queue_cur-> num_fuzzed >= FUNC_LONG_FUZZ2) {func_status = 1; func_rel_threshold = FUNC_REL_THRESHOLD2;}
+   else if (queue_cur-> num_fuzzed >= FUNC_LONG_FUZZ3) {func_status = 2; func_rel_threshold = FUNC_REL_THRESHOLD3;}
+   else func_status = 0;
+ }
 
 #ifdef IGNORE_FINDS
 
@@ -5655,7 +5659,7 @@ static u8 fuzz_one(char** argv) {
          possibly skip to them at the expense of already-fuzzed or non-favored
          cases. */
 
-      if ((queue_cur->was_fuzzed || !queue_cur->favored) &&
+      if ((queue_cur->num_fuzzed || !queue_cur->favored) &&
           UR(100) < SKIP_TO_NEW_PROB) return 1;
 
     } else if (!dumb_mode && !queue_cur->favored && queued_paths > 10) {
@@ -5664,7 +5668,7 @@ static u8 fuzz_one(char** argv) {
          The odds of skipping stuff are higher for already-fuzzed inputs and
          lower for never-fuzzed entries. */
 
-      if (queue_cycle > 1 && !queue_cur->was_fuzzed) {
+      if (queue_cycle > 1 && !queue_cur->num_fuzzed) {
 
         if (UR(100) < SKIP_NFAV_NEW_PROB) return 1;
 
@@ -5950,10 +5954,10 @@ re_run: // re-run when running in shadow mode
   position_map = ck_alloc(sizeof(u32) * (len+1));
 
   /* Skip right away if -d is given, if we have done deterministic fuzzing on
-     this entry ourselves (was_fuzzed), or if it has gone through deterministic
+     this entry ourselves (num_fuzzed), or if it has gone through deterministic
      testing in earlier, resumed runs (passed_det). */
 
-  if ((!rb_fuzzing && skip_deterministic) || skip_deterministic_bootstrap || (vanilla_afl && queue_cur->was_fuzzed ) || (vanilla_afl && queue_cur->passed_det))
+  if ((!rb_fuzzing && skip_deterministic) || skip_deterministic_bootstrap || (vanilla_afl && queue_cur->num_fuzzed ) || (vanilla_afl && queue_cur->passed_det))
     goto havoc_stage;
 
   /* Skip deterministic fuzzing if exec path checksum puts this out of scope
@@ -6334,6 +6338,7 @@ skip_simple_bitflip:
   }
 
   if(mask_size_file) fprintf(mask_size_file, "%0.1f/%u\n",(double) mask_size/ 3.0, cur_len);
+  queue_cur->mask_size = mask_size;
 
   if (rb_fuzzing && (mask_size == 0)){
     if (blacklist_pos >= blacklist_size -1){
@@ -7884,11 +7889,12 @@ abandon_entry:
   /* Update pending_not_fuzzed count if we made it through the calibration
      cycle and have not seen this entry before. */
 
-  if (!stop_soon && !queue_cur->cal_failed && !queue_cur->was_fuzzed) {
-    queue_cur->was_fuzzed = 1;
+  if (!stop_soon && !queue_cur->cal_failed && !queue_cur->num_fuzzed) {
     pending_not_fuzzed--;
     if (queue_cur->favored) pending_favored--;
   }
+
+  queue_cur->num_fuzzed ++;
 
   total_branch_tries = 0;
   DEBUG1("%shavoc stage: %i new coverage in %i total execs\n", shadow_prefix, queued_discovered-orig_queued_discovered, total_execs-orig_total_execs);
@@ -9538,6 +9544,18 @@ stop_fuzzing:
     if (hit_bits[idx1] != 0){
       fprintf(fnnn, "%u\n", idx1);
     }
+  }
+  fclose(fnnn);
+
+  fnn = alloc_printf("%s/queue.csv", out_dir);
+  fnnn = fopen(fnn, "w");
+  ck_free(fnn);
+  fprintf(fnnn,"id, len, num_fuzzed, exec_us, mask_size\n");
+  struct queue_entry * qtmp = queue;
+  idx1 = 0;
+  while(qtmp){
+    fprintf(fnnn, "%u,%u,%u,%llu,%u\n",idx1++,qtmp->len,qtmp->num_fuzzed,qtmp->exec_us,qtmp->mask_size);
+    qtmp = qtmp->next;
   }
   fclose(fnnn);
 

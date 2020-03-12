@@ -13,11 +13,14 @@ num_0_branch = 0
 
 for l in f1:
   l = l.strip()
-  fuzz_mask_size += float(l.split("/")[0])
-  total_byte_size += float(l.split("/")[1])
-  num_branch += 1
-  if l.split("/")[0] == "0.0":
-    num_0_branch += 1
+  try:
+    fuzz_mask_size += float(l.split("/")[0])
+    total_byte_size += float(l.split("/")[1])
+    num_branch += 1
+    if l.split("/")[0] == "0.0":
+      num_0_branch += 1
+  except :
+    continue
 
 print ("total : ")
 print (str(fuzz_mask_size) + "/" + str(total_byte_size))

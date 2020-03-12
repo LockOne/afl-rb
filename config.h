@@ -31,9 +31,9 @@
 
 #define TOTAL_TIMEOUT 1000 * 60 * 60 * 24
 
-#define FUNC_TIMEOUT1 TOTAL_TIMEOUT * 0.3
-#define FUNC_TIMEOUT2 TOTAL_TIMEOUT * 0.5
-#define FUNC_TIMEOUT3 TOTAL_TIMEOUT * 0.7
+#define FUNC_LONG_FUZZ1 5
+#define FUNC_LONG_FUZZ2 10
+#define FUNC_LONG_FUZZ3 15
 
 /******************************************************
  *                                                    *
