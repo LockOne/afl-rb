@@ -319,12 +319,11 @@ static FILE * mask_size_file = NULL;
 static FILE * rel_func_file = NULL; 
 static u32 hit_count = 0;
 static double hit_ratio = 0;
-static u32 skip_count = 0;
 static u32 skip_total_count = 0;
 static u32 skip_tmp_count = 0;
 static u32 try_count = 0;
 static u32 func_list_size = 100;
-static double func_rel_threshold = FUNC_REL_THRESHOLD1;
+static double func_rel_threshold = FUNC_REL_THRESHOLD;
 /* @RB@ Things about branches */
 
 static u32 vanilla_afl = 1000;      /* @RB@ How many executions to conduct 
@@ -4781,9 +4780,9 @@ static void show_stats(void) {
        "  imported : " cRST "%-10s " bSTG bV "\n", tmp,
        sync_id ? DI(queued_imported) : (u8*)"n/a");
 
-  sprintf(tmp, "%s/%s, %s/%s, %s/%s:%s",
+  sprintf(tmp, "%s/%s, %s/%s, %s",
           DI(stage_finds[STAGE_HAVOC]), DI(stage_cycles[STAGE_HAVOC]),
-          DI(stage_finds[STAGE_SPLICE]), DI(stage_cycles[STAGE_SPLICE]), DI(skip_count), DI(try_count), DI(skip_total_count));
+          DI(stage_finds[STAGE_SPLICE]), DI(stage_cycles[STAGE_SPLICE]), DI(try_count));
 
   //SAYF(bV bSTOP "       havoc : " cRST "%-37s " bSTG bV bSTOP, tmp);
   SAYF(bV bSTOP "       havoc : " cRST "%-50s " bSTG bV bSTOP bSTG bV "\n", tmp);
@@ -5624,7 +5623,6 @@ static u8 fuzz_one(char** argv) {
       rb_fuzzing = 0;
       if (bootstrap == 2){
         skip_deterministic_bootstrap = 1;
-
       }
     }
 
@@ -5636,10 +5634,7 @@ static u8 fuzz_one(char** argv) {
  }
 
  if (func_file){
- if (queue_cur-> num_fuzzed >= FUNC_LONG_FUZZ1) {func_status = 0; func_rel_threshold = FUNC_REL_THRESHOLD1;}
-   else if (queue_cur-> num_fuzzed >= FUNC_LONG_FUZZ2) {func_status = 1; func_rel_threshold = FUNC_REL_THRESHOLD2;}
-   else if (queue_cur-> num_fuzzed >= FUNC_LONG_FUZZ3) {func_status = 2; func_rel_threshold = FUNC_REL_THRESHOLD3;}
-   else func_status = 0;
+   func_status = 1;
  }
 
 #ifdef IGNORE_FINDS
@@ -6187,7 +6182,7 @@ skip_simple_bitflip:
   if(func_status){
     mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
     for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
-      if (tmp_branch_mask[stage_cur] > mid_branch_mask || target_branch_mask[stage_cur]) {
+      if (tmp_branch_mask[stage_cur] > mid_branch_mask && target_branch_mask[stage_cur]) {
         branch_mask[stage_cur] = 1;
         mask_size ++;
       } 
@@ -6270,7 +6265,7 @@ skip_simple_bitflip:
     if (func_status){
       mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
       for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
-        if (tmp_branch_mask[stage_cur] > mid_branch_mask || target_branch_mask[stage_cur]) {
+        if (tmp_branch_mask[stage_cur] > mid_branch_mask && target_branch_mask[stage_cur]) {
           branch_mask[stage_cur] += 2;
           mask_size ++;
         } 
@@ -6323,7 +6318,7 @@ skip_simple_bitflip:
     if (func_status){
       mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
       for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
-        if (tmp_branch_mask[stage_cur] > mid_branch_mask || target_branch_mask[stage_cur]) {
+        if (tmp_branch_mask[stage_cur] > mid_branch_mask && target_branch_mask[stage_cur]) {
           branch_mask[stage_cur] += 4;
           mask_size ++;
         } 
@@ -7304,7 +7299,6 @@ havoc_stage:
     u32 posn;
 
     stage_cur_val = use_stacking;
-    skip_tmp_count = skip_count;
  
     for (i = 0; i < use_stacking; i++) {
 
@@ -7727,7 +7721,6 @@ havoc_stage:
 
     }
     try_count += use_stacking;
-    skip_total_count += (use_stacking + skip_tmp_count == skip_count)? 1 : 0;
 
     if (common_fuzz_stuff(argv, out_buf, temp_len))
       goto abandon_entry;

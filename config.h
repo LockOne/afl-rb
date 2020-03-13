@@ -23,17 +23,11 @@
 
 #define VERSION             "2.52b"
 
-#define FUNC_REL_THRESHOLD1 0.8
-#define FUNC_REL_THRESHOLD2 0.5
-#define FUNC_REL_THRESHOLD3 0.1
+#define FUNC_REL_THRESHOLD 0.7
 
-#define MASK_THRESHOLD 0.8
+#define MASK_THRESHOLD 0.7
 
 #define TOTAL_TIMEOUT 1000 * 60 * 60 * 24
-
-#define FUNC_LONG_FUZZ1 5
-#define FUNC_LONG_FUZZ2 10
-#define FUNC_LONG_FUZZ3 15
 
 /******************************************************
  *                                                    *
