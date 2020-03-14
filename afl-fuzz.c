@@ -319,11 +319,12 @@ static FILE * mask_size_file = NULL;
 static FILE * rel_func_file = NULL; 
 static u32 hit_count = 0;
 static double hit_ratio = 0;
-static u32 skip_total_count = 0;
-static u32 skip_tmp_count = 0;
 static u32 try_count = 0;
 static u32 func_list_size = 100;
 static double func_rel_threshold = FUNC_REL_THRESHOLD;
+static u8 rb_fr_score = 0;
+static double max_rb_fr_score = 0.0;
+static double min_rb_fr_score = 1.0;
 /* @RB@ Things about branches */
 
 static u32 vanilla_afl = 1000;      /* @RB@ How many executions to conduct 
@@ -4640,10 +4641,12 @@ static void show_stats(void) {
   sprintf(tmp, "%u", queue_cur->bitmap_size);
   SAYF(bV bSTOP " cur bitmap size : " cRST "%-17s " bSTG bV bSTOP,tmp);
   sprintf(tmp, "%u", num_hash);
-  SAYF(" Func Rel TCs  : "  cRST "%-21s " bSTG bV "\n", tmp);
+  SAYF(" Func Rel TCs   : "  cRST "%-21s " bSTG bV "\n", tmp);
 
   sprintf(tmp, "%u", queue_cur->num_fuzzed);
-  SAYF(bV bSTOP " cur num fuzzed : " cRST "%-17s " bSTG bV bSTOP "              " bSTG bV "\n", tmp);
+  SAYF(bV bSTOP "  cur num fuzzed : " cRST "%-17s " bSTG bV bSTOP, tmp);
+  sprintf(tmp, "%u", rb_fr_score);
+  SAYF(" cur rb fr score : " cRST "%-21s " bSTG bV "\n", tmp);
  
   sprintf(tmp, "%s (%0.02f%%)", DI(cur_skipped_paths),
           ((double)cur_skipped_paths * 100) / queued_paths);
@@ -5395,6 +5398,23 @@ static u32 calculate_score(struct queue_entry* q) {
 
 }
 
+static u8 get_rb_fr_score(){
+  u32 bm_size = queue_cur->bitmap_size; 
+  u32 i, hit_count = 0;
+  if (bm_size != 0){
+    for (i = 0; i < MAP_SIZE ; i++){
+      if(unlikely(queue_cur->trace_mini[i >> 3] & (1 << (i & 7))) && rel_branch_map[i]){
+        hit_count ++; 
+      }
+    } 
+  }
+  double cur_score = ((double) hit_count) / ((double) bm_size);
+  max_rb_fr_score = max_rb_fr_score < cur_score ? cur_score : max_rb_fr_score;
+  min_rb_fr_score = min_rb_fr_score > cur_score ? cur_score : min_rb_fr_score;
+  if (max_rb_fr_score == min_rb_fr_score) return 100;
+  return (u8) (100 * (max_rb_fr_score - cur_score) / (max_rb_fr_score - min_rb_fr_score));
+}
+
 
 /* Helper function to see if a particular change (xor_val = old ^ new) could
    be a product of deterministic bit flips with the lengths and stepovers
@@ -5601,11 +5621,6 @@ static u8 fuzz_one(char** argv) {
   /* RB Vars*/
   u8 * branch_mask = 0;
   u8 * orig_branch_mask = 0;
-  u32 * tmp_branch_mask = NULL;
-  u8 * target_branch_mask = NULL;
-  u32 max_branch_mask = 0;
-  u32 mid_branch_mask = 0;
-  u32 min_branch_mask = 0;
   u8 rb_skip_deterministic = 0;
   u8 skip_simple_bitflip = 0;
   u8 * virgin_virgin_bits = 0;
@@ -5761,8 +5776,8 @@ static u8 fuzz_one(char** argv) {
         num_target_func = 0;
         memset(rel_branch_map, 0, MAP_SIZE);
         for ( i = 0; i < 10 ; i ++){
-          num_target_func ++;
           if(target_funcs[i] == 0) break;
+          num_target_func ++;
           target_func = target_funcs[i] - 1;
           if (target_func != -1 && func_exec_table[target_func][target_func]){
             u32 target_exec = func_exec_table[target_func][target_func];
@@ -5936,12 +5951,7 @@ re_run: // re-run when running in shadow mode
       orig_branch_mask = alloc_branch_mask(len + 1);
   } else {
       branch_mask = ck_alloc(len + 1);
-      if (func_status){
-        tmp_branch_mask = ck_alloc(sizeof(u32) * (len+1));
-        target_branch_mask = ck_alloc(sizeof(u8) * (len+1));
-        memset(tmp_branch_mask,0, sizeof(u32) * (len+1));
-        memset(target_branch_mask,0, sizeof(u8) * (len+1));
-      }
+      rb_fr_score = get_rb_fr_score();
       orig_branch_mask = ck_alloc(len + 1);
   }
   // this will be used to store the valid modifiable positions
@@ -6119,10 +6129,8 @@ skip_simple_bitflip:
 
   orig_hit_cnt = new_hit_cnt;
 
-  max_branch_mask = 0.0;
-  min_branch_mask = 1.0;
-
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
+    if (func_status && (UR(100) > rb_fr_score)) continue;
 
     stage_cur_byte = stage_cur;
 
@@ -6131,25 +6139,9 @@ skip_simple_bitflip:
     if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
     if (rb_fuzzing && !shadow_mode && use_branch_mask > 0){
-      if (func_status) {
-      u32 idx;
-      hit_count = 0;
-      for (idx = 0; idx < MAP_SIZE ; idx++){
-        if(unlikely(trace_bits[idx])){
-          if(rel_branch_map[idx]){
-            hit_count ++;
-          }
-        }
-      }
-      tmp_branch_mask[stage_cur] = hit_count;
-      target_branch_mask[stage_cur] = trace_bits[rb_fuzzing -1] != 0;
-      max_branch_mask = (max_branch_mask < hit_count) ? hit_count : max_branch_mask;
-      min_branch_mask = (min_branch_mask > hit_count) ? hit_count : min_branch_mask;
-      } else{
-        if (hits_branch(rb_fuzzing - 1)){
-          branch_mask[stage_cur] = 1;
-          mask_size += 1;
-        }
+      if (hits_branch(rb_fuzzing - 1)){
+        branch_mask[stage_cur] = 1;
+        mask_size += 1;
       }
     }
     /* We also use this stage to pull off a simple trick: we identify
@@ -6178,19 +6170,6 @@ skip_simple_bitflip:
 
     out_buf[stage_cur] ^= 0xFF;
 
-  }
-  if(func_status){
-    mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
-    for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
-      if (tmp_branch_mask[stage_cur] > mid_branch_mask && target_branch_mask[stage_cur]) {
-        branch_mask[stage_cur] = 1;
-        mask_size ++;
-      } 
-    }
-    max_branch_mask = 0;
-    min_branch_mask = 1.0;
-    memset(tmp_branch_mask,0, sizeof(u32) * (len+1));
-    memset(target_branch_mask,0, sizeof(u8) * (len+1));
   }
 
   /* If the effector map is more than EFF_MAX_PERC dense, just flag the
@@ -6227,6 +6206,8 @@ skip_simple_bitflip:
     stage_name  = "byte remove 8/8";
     stage_short = "rbrem8";
     for (stage_cur = 0; stage_cur < len; stage_cur++) {
+
+      if (func_status && (UR(100) > rb_fr_score)) continue;
       /* delete current byte */
       stage_cur_byte = stage_cur;
     
@@ -6238,48 +6219,17 @@ skip_simple_bitflip:
       if (common_fuzz_stuff(argv, tmp_buf, len - 1)) goto abandon_entry;
 
       /* if even with this byte deleted we hit the branch, can delete here */
-      if (func_status){
-        u32 idx;
-        u32 trace_count = 0;
-        hit_count = 0;
-        for (idx = 0; idx < MAP_SIZE ; idx++){
-          if(unlikely(trace_bits[idx])){
-            trace_count ++;
-            if(rel_branch_map[idx]){
-              hit_count ++;
-            }
-          }
-        }
-        tmp_branch_mask[stage_cur] = hit_count;
-        target_branch_mask[stage_cur] = trace_bits[rb_fuzzing -1] != 0;
-        max_branch_mask = (max_branch_mask < hit_count) ? hit_count : max_branch_mask;
-        min_branch_mask = (min_branch_mask > hit_count) ? hit_count : min_branch_mask;
-      } else {
-        if (hits_branch(rb_fuzzing - 1)){
-          branch_mask[stage_cur] += 2;
-          mask_size ++;
-        }
+      if (hits_branch(rb_fuzzing - 1)){
+        branch_mask[stage_cur] += 2;
+        mask_size ++;
       }
     }
 
-    if (func_status){
-      mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
-      for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
-        if (tmp_branch_mask[stage_cur] > mid_branch_mask && target_branch_mask[stage_cur]) {
-          branch_mask[stage_cur] += 2;
-          mask_size ++;
-        } 
-      }
-      max_branch_mask = 0;
-      min_branch_mask = 1.0;
-      memset(tmp_branch_mask,0, sizeof(u32) * (len+1));
-      memset(target_branch_mask,0, sizeof(u8) * (len+1));
-    }
-    
    // check if we can add at this byte
     stage_name  = "byte add 8/8";
     stage_short = "rbadd8";
     for (stage_cur = 0; stage_cur <= len; stage_cur++) {
+      if (func_status && (UR(100) > rb_fr_score)) continue;
       /* add random byte */
       stage_cur_byte = stage_cur;
       /* head */
@@ -6291,40 +6241,10 @@ skip_simple_bitflip:
       if (common_fuzz_stuff(argv, tmp_buf, len + 1)) goto abandon_entry;
 
       /* if adding before still hit branch, can add */
-      if (func_status){
-        u32 idx;
-        u32 trace_count = 0;
-        hit_count = 0;
-        for (idx = 0; idx < MAP_SIZE ; idx++){
-          if(unlikely(trace_bits[idx])){
-            trace_count ++;
-            if(rel_branch_map[idx]){
-              hit_count ++;
-            }
-          }
-        }
-        tmp_branch_mask[stage_cur] = hit_count;
-        target_branch_mask[stage_cur] = trace_bits[rb_fuzzing -1] != 0;
-        max_branch_mask = (max_branch_mask < hit_count) ? hit_count : max_branch_mask;
-        min_branch_mask = (min_branch_mask > hit_count) ? hit_count : min_branch_mask;
-      } else {
-        if (hits_branch(rb_fuzzing - 1)){
-          branch_mask[stage_cur] += 4;
-          mask_size ++;
-        }
+      if (hits_branch(rb_fuzzing - 1)){
+        branch_mask[stage_cur] += 4;
+        mask_size ++;
       }
-    }
-
-    if (func_status){
-      mid_branch_mask = min_branch_mask + (max_branch_mask - min_branch_mask) * MASK_THRESHOLD; 
-      for (stage_cur = 0; stage_cur < stage_max ; stage_cur++){
-        if (tmp_branch_mask[stage_cur] > mid_branch_mask && target_branch_mask[stage_cur]) {
-          branch_mask[stage_cur] += 4;
-          mask_size ++;
-        } 
-      } 
-      ck_free(tmp_branch_mask);
-      ck_free(target_branch_mask);
     }
 
     ck_free(tmp_buf);
@@ -9315,8 +9235,8 @@ int main(int argc, char** argv) {
       read_func_file(ptr); 
       ptr = strtok(NULL, ",");
     }
-    //debug
     /*
+    //debug
     u32 idx2;
     for (idx = 0; idx < num_func; idx ++){
       struct func * cur_func = func_list[idx];
@@ -9325,6 +9245,13 @@ int main(int argc, char** argv) {
         printf("%u, ", cur_func->branch_ids[idx2]);
       }
       printf("\n");
+    }
+    for (idx = 0; idx < MAP_SIZE; idx++){
+     printf("bid : %u\n", idx);
+      for(idx2 = 0; idx2 < 10; idx2++){
+        printf("%u, ", bid_func_map[idx][idx2]);
+      }
+     printf("\n");
     }
     */
     
