@@ -5400,7 +5400,8 @@ static u32 calculate_score(struct queue_entry* q) {
 
 static u8 get_rb_fr_score(){
   u32 bm_size = queue_cur->bitmap_size; 
-  u32 i, hit_count = 0;
+  u32 i;
+  hit_count = 0;
   if (bm_size != 0){
     for (i = 0; i < MAP_SIZE ; i++){
       if(unlikely(queue_cur->trace_mini[i >> 3] & (1 << (i & 7))) && rel_branch_map[i]){
@@ -5412,7 +5413,7 @@ static u8 get_rb_fr_score(){
   max_rb_fr_score = max_rb_fr_score < cur_score ? cur_score : max_rb_fr_score;
   min_rb_fr_score = min_rb_fr_score > cur_score ? cur_score : min_rb_fr_score;
   if (max_rb_fr_score == min_rb_fr_score) return 100;
-  return (u8) (100 * (max_rb_fr_score - cur_score) / (max_rb_fr_score - min_rb_fr_score));
+  return 50 + (u8) (50 * (max_rb_fr_score - cur_score) / (max_rb_fr_score - min_rb_fr_score));
 }
 
 
