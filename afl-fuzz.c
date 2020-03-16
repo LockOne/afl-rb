@@ -6140,7 +6140,8 @@ skip_simple_bitflip:
     if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
     if (rb_fuzzing && !shadow_mode && use_branch_mask > 0){
-      if (hits_branch(rb_fuzzing - 1)){
+      int res = hits_branch(rb_fuzzing - 1);
+      if ((res && (UR(100) < rb_fr_score)) || (!res && (UR(100) > rb_fr_score))){
         branch_mask[stage_cur] = 1;
         mask_size += 1;
       }
@@ -6220,7 +6221,10 @@ skip_simple_bitflip:
       if (common_fuzz_stuff(argv, tmp_buf, len - 1)) goto abandon_entry;
 
       /* if even with this byte deleted we hit the branch, can delete here */
-      if (hits_branch(rb_fuzzing - 1)){
+
+      int res = hits_branch(rb_fuzzing - 1);
+      if ((res && (UR(100) < rb_fr_score)) || (!res && (UR(100) > rb_fr_score))){
+      //if (hits_branch(rb_fuzzing - 1)){
         branch_mask[stage_cur] += 2;
         mask_size ++;
       }
@@ -6242,7 +6246,10 @@ skip_simple_bitflip:
       if (common_fuzz_stuff(argv, tmp_buf, len + 1)) goto abandon_entry;
 
       /* if adding before still hit branch, can add */
-      if (hits_branch(rb_fuzzing - 1)){
+
+      int res = hits_branch(rb_fuzzing - 1);
+      if ((res && (UR(100) < rb_fr_score)) || (!res && (UR(100) > rb_fr_score))){
+      //if (hits_branch(rb_fuzzing - 1)){
         branch_mask[stage_cur] += 4;
         mask_size ++;
       }
