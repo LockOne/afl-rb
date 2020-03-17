@@ -5413,7 +5413,7 @@ static u8 get_rb_fr_score(){
   max_rb_fr_score = max_rb_fr_score < cur_score ? cur_score : max_rb_fr_score;
   min_rb_fr_score = min_rb_fr_score > cur_score ? cur_score : min_rb_fr_score;
   if (max_rb_fr_score == min_rb_fr_score) return 100;
-  return 50 + (u8) (50 * (max_rb_fr_score - cur_score) / (max_rb_fr_score - min_rb_fr_score));
+  return 40 + (u8) (60 * (max_rb_fr_score - cur_score) / (max_rb_fr_score - min_rb_fr_score));
 }
 
 
@@ -6131,6 +6131,7 @@ skip_simple_bitflip:
   orig_hit_cnt = new_hit_cnt;
 
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
+    if (UR(100) >= rb_fr_score) continue;
 
     stage_cur_byte = stage_cur;
 
@@ -6139,8 +6140,7 @@ skip_simple_bitflip:
     if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
     if (rb_fuzzing && !shadow_mode && use_branch_mask > 0){
-      int res = hits_branch(rb_fuzzing - 1);
-      if ((res && (UR(100) < rb_fr_score)) || (!res && (UR(100) > rb_fr_score))){
+      if (hits_branch(rb_fuzzing - 1)){
         branch_mask[stage_cur] = 1;
         mask_size += 1;
       }
@@ -6207,7 +6207,7 @@ skip_simple_bitflip:
     stage_name  = "byte remove 8/8";
     stage_short = "rbrem8";
     for (stage_cur = 0; stage_cur < len; stage_cur++) {
-
+      if (UR(100) >= rb_fr_score) continue;
       /* delete current byte */
       stage_cur_byte = stage_cur;
     
@@ -6220,8 +6220,7 @@ skip_simple_bitflip:
 
       /* if even with this byte deleted we hit the branch, can delete here */
 
-      int res = hits_branch(rb_fuzzing - 1);
-      if ((res && (UR(100) < rb_fr_score)) || (!res && (UR(100) > rb_fr_score))){
+      if (hits_branch(rb_fuzzing - 1)){
       //if (hits_branch(rb_fuzzing - 1)){
         branch_mask[stage_cur] += 2;
         mask_size ++;
@@ -6232,6 +6231,7 @@ skip_simple_bitflip:
     stage_name  = "byte add 8/8";
     stage_short = "rbadd8";
     for (stage_cur = 0; stage_cur <= len; stage_cur++) {
+      if (UR(100) >= rb_fr_score) continue;
       /* add random byte */
       stage_cur_byte = stage_cur;
       /* head */
@@ -6244,8 +6244,7 @@ skip_simple_bitflip:
 
       /* if adding before still hit branch, can add */
 
-      int res = hits_branch(rb_fuzzing - 1);
-      if ((res && (UR(100) < rb_fr_score)) || (!res && (UR(100) > rb_fr_score))){
+      if(hits_branch(rb_fuzzing - 1)){
       //if (hits_branch(rb_fuzzing - 1)){
         branch_mask[stage_cur] += 4;
         mask_size ++;
