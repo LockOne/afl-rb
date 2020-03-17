@@ -6131,7 +6131,6 @@ skip_simple_bitflip:
   orig_hit_cnt = new_hit_cnt;
 
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
-    if (func_status && (UR(100) > rb_fr_score)) continue;
 
     stage_cur_byte = stage_cur;
 
@@ -6209,7 +6208,6 @@ skip_simple_bitflip:
     stage_short = "rbrem8";
     for (stage_cur = 0; stage_cur < len; stage_cur++) {
 
-      if (func_status && (UR(100) > rb_fr_score)) continue;
       /* delete current byte */
       stage_cur_byte = stage_cur;
     
@@ -6234,7 +6232,6 @@ skip_simple_bitflip:
     stage_name  = "byte add 8/8";
     stage_short = "rbadd8";
     for (stage_cur = 0; stage_cur <= len; stage_cur++) {
-      if (func_status && (UR(100) > rb_fr_score)) continue;
       /* add random byte */
       stage_cur_byte = stage_cur;
       /* head */
