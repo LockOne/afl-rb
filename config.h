@@ -25,7 +25,8 @@
 
 #define FUNC_REL_THRESHOLD 0.7
 
-#define MASK_THRESHOLD 0.7
+#define SCORE_INIT 30
+#define SCORE_FINAL 70
 
 #define TOTAL_TIMEOUT 1000 * 60 * 60 * 24
 
