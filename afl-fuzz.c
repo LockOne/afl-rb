@@ -5414,7 +5414,7 @@ static u8 get_rb_fr_score(){
   max_rb_fr_score = max_rb_fr_score < cur_score ? cur_score : max_rb_fr_score;
   min_rb_fr_score = min_rb_fr_score > cur_score ? cur_score : min_rb_fr_score;
   if (max_rb_fr_score == min_rb_fr_score) return 50;
-  cur_limit = SCORE_INIT + (u8) ((get_cur_time() - start_time / TOTAL_TIMEOUT) * ((double) (SCORE_FINAL - SCORE_INIT)));
+  cur_limit = SCORE_INIT + (u8) (((get_cur_time() - start_time) / TOTAL_TIMEOUT) * ((double) (SCORE_FINAL - SCORE_INIT)));
 
   return cur_limit + (u8) ((100 - cur_limit) * (max_rb_fr_score - cur_score) / (max_rb_fr_score - min_rb_fr_score));
 }
