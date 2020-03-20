@@ -323,7 +323,7 @@ static u32 try_count = 0;
 static u32 func_list_size = 100;
 static double func_rel_threshold = FUNC_REL_THRESHOLD;
 static u8 rb_fr_score = 0;
-static u8 cur_limit = SCORE_INIT;
+static u8 cur_limit = SCORE_LIMIT;
 static double max_rb_fr_score = 0.0;
 static double min_rb_fr_score = 1.0;
 /* @RB@ Things about branches */
@@ -5414,9 +5414,9 @@ static u8 get_rb_fr_score(){
   max_rb_fr_score = max_rb_fr_score < cur_score ? cur_score : max_rb_fr_score;
   min_rb_fr_score = min_rb_fr_score > cur_score ? cur_score : min_rb_fr_score;
   if (max_rb_fr_score == min_rb_fr_score) return 50;
-  cur_limit = SCORE_INIT + (u8) (((get_cur_time() - start_time) / TOTAL_TIMEOUT) * ((double) (SCORE_FINAL - SCORE_INIT)));
+  cur_limit = SCORE_LIMIT + (u8) ( 50 * (max_rb_fr_score - cur_score) / (max_rb_fr_score - min_rb_fr_score));
 
-  return cur_limit + (u8) ((100 - cur_limit) * (max_rb_fr_score - cur_score) / (max_rb_fr_score - min_rb_fr_score));
+  return cur_limit;
 }
 
 
