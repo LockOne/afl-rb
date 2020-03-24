@@ -29,6 +29,8 @@
 
 #define TOTAL_TIMEOUT 1000 * 60 * 60 * 24
 
+#define FIX_RB_FR_SCORE 50
+
 /******************************************************
  *                                                    *
  *  Settings that may be of interest to power users:  *

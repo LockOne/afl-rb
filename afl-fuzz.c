@@ -5400,6 +5400,7 @@ static u32 calculate_score(struct queue_entry* q) {
 }
 
 static u8 get_rb_fr_score(){
+  if (FIX_RB_FR_SCORE) return FIX_RB_FR_SCORE;
   u32 bm_size = queue_cur->bitmap_size; 
   u32 i;
   hit_count = 0;
