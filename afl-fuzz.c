@@ -1257,34 +1257,37 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
         }
       }
     }
-    u8* hash = (u8*) malloc (sizeof(u8) * hash_size);
-    memset(hash,0, sizeof(u8) * hash_size);
-    for (i = 0; i < num_func ; i ++){
-      if (func_exec_list[i / 8] & (1 << (i % 8))){
-        if (func_exec_ids[i] == 0xffffffff){
-          func_exec_ids[i] = func_exec_cur_id++;
-          hash[((func_exec_cur_id -1) % (hash_size * 8)) / 8] |= 1 << ((func_exec_cur_id - 1) % 8);
-        } else {
 
-          hash[(func_exec_ids[i] % (hash_size * 8)) / 8] |= 1 << (func_exec_ids[i] % 8);
+    if (func_exec_hash != NULL) {
+      u8* hash = (u8*) malloc (sizeof(u8) * hash_size);
+      memset(hash,0, sizeof(u8) * hash_size);
+      for (i = 0; i < num_func ; i ++){
+        if (func_exec_list[i / 8] & (1 << (i % 8))){
+          if (func_exec_ids[i] == 0xffffffff){
+            func_exec_ids[i] = func_exec_cur_id++;
+            hash[((func_exec_cur_id -1) % (hash_size * 8)) / 8] |= 1 << ((func_exec_cur_id - 1) % 8);
+          } else {
+  
+            hash[(func_exec_ids[i] % (hash_size * 8)) / 8] |= 1 << (func_exec_ids[i] % 8);
+          }
         }
       }
-    }
-    for (i = 0; i < num_hash ; i++){
-      u8 same = 1;
-      for (j = 0; j < hash_size ; j++){
-        if (func_exec_hash[i][j] != hash[j]){
-          same = 0;
-          break;
+      for (i = 0; i < num_hash ; i++){
+        u8 same = 1;
+        for (j = 0; j < hash_size ; j++){
+          if (func_exec_hash[i][j] != hash[j]){
+            same = 0;
+            break;
+          }
         }
+        if (same) {free(hash); return ;}
       }
-      if (same) {free(hash); return ;}
+      func_exec_hash[num_hash++] = hash;
+      if (num_hash == func_exec_hash_size) {
+        func_exec_hash = (u8 **) realloc(func_exec_hash, sizeof(u8*) * (func_exec_hash_size + 100));
+        func_exec_hash_size += 100;
+      }
     }
-    func_exec_hash[num_hash++] = hash;
-    if (num_hash == func_exec_hash_size) {
-      func_exec_hash = (u8 **) realloc(func_exec_hash, sizeof(u8*) * (func_exec_hash_size + 100));
-      func_exec_hash_size += 100;
-    } 
     for (i = 0; i < num_func ; i++){
       for(j = 0; j < num_func; j++){
         if((func_exec_list[i/8] & (1 << (i % 8))) & (func_exec_list[j/8] & ( 1 << (j % 8)))){
@@ -9268,12 +9271,14 @@ int main(int argc, char** argv) {
     memset(func_exec_table, 0, sizeof(u32*) * num_func + sizeof(u32) * num_func * num_func);
     func_exec_list = (u8 *) malloc(sizeof (u8) * (num_func / 8 + 1));
     func_exec_ids = (u32 *) malloc(sizeof (u32) * num_func);
-    func_exec_hash = (u8** ) malloc(sizeof (u8*) * func_exec_hash_size);
+    if (FUNC_REL_SEL) {
+      func_exec_hash = (u8** ) malloc(sizeof (u8*) * func_exec_hash_size);
+      if (func_exec_hash == NULL) FATAL("malloc failed");
+      memset(func_exec_hash,0,sizeof(u8*) * func_exec_hash_size);
+    }
     if (func_exec_list == NULL) FATAL("malloc failed");
     if (func_exec_ids == NULL) FATAL("malloc failed");
-    if (func_exec_hash == NULL) FATAL("malloc failed");
     memset(func_exec_ids,0xff,sizeof(u32) * num_func);
-    memset(func_exec_hash,0,sizeof(u8*) * func_exec_hash_size);
     func_rel_table = (double *) malloc(sizeof (double) * num_func);
     if (func_rel_table == NULL) FATAL("malloc failed");
     u32 * ptr2 = (u32 *) (func_exec_table + num_func);

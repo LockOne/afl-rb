@@ -31,6 +31,8 @@
 
 #define FIX_RB_FR_SCORE 50
 
+#define FUNC_REL_SEL 1
+
 /******************************************************
  *                                                    *
  *  Settings that may be of interest to power users:  *
