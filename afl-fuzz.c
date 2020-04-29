@@ -53,6 +53,8 @@
 #include <stdarg.h>
 #include <limits.h>
 
+#include <math.h>
+
 
 #include <sys/wait.h>
 #include <sys/time.h>
@@ -323,7 +325,7 @@ static u32 try_count = 0;
 static u32 func_list_size = 100;
 static const double func_rel_threshold = FUNC_REL_THRESHOLD;
 static u8 rb_fr_score = 0;
-static u8 cur_limit = SCORE_LIMIT;
+static float rb_fr_perf = 0.0;
 static double max_rb_fr_score = 0.0;
 static double min_rb_fr_score = 1.0;
 /* @RB@ Things about branches */
@@ -4649,8 +4651,8 @@ static void show_stats(void) {
 
   sprintf(tmp, "%u", queue_cur->num_fuzzed);
   SAYF(bV bSTOP "  cur num fuzzed : " cRST "%-17s " bSTG bV bSTOP, tmp);
-  sprintf(tmp, "%u/%u", rb_fr_score, cur_limit);
-  SAYF(" rbfr score/limit : " cRST "%-21s " bSTG bV "\n", tmp);
+  sprintf(tmp, "%u/%f", rb_fr_score, rb_fr_perf);
+  SAYF(" rbfr score/perf : " cRST "%-21s " bSTG bV "\n", tmp);
  
   sprintf(tmp, "%s (%0.02f%%)", DI(cur_skipped_paths),
           ((double)cur_skipped_paths * 100) / queued_paths);
@@ -5394,6 +5396,10 @@ static u32 calculate_score(struct queue_entry* q) {
 
   }
 
+  rb_fr_perf = pow(2.0, ((float) (rb_fr_score - 50))/ 10.0);
+
+  perf_score = (u32) (((float) perf_score) * rb_fr_perf);
+
   /* Make sure that we don't go over limit. */
 
   if (perf_score > HAVOC_MAX_MULT * 100) perf_score = HAVOC_MAX_MULT * 100;
@@ -5402,10 +5408,13 @@ static u32 calculate_score(struct queue_entry* q) {
 
 }
 
-static u8 get_rb_fr_score(){
+static void get_rb_fr_score(){
   //high, the better (0 => never mutate, 100 => mutate all)
   u32 i,j;
-  if (FIX_RB_FR_SCORE) return FIX_RB_FR_SCORE;
+  if (FIX_RB_FR_SCORE) {
+    rb_fr_score= FIX_RB_FR_SCORE;
+    return;
+  }
   for (i = 0; i < (num_func / 8 + 1); i ++){
       func_exec_list[i] = 0;
   }
@@ -5445,10 +5454,11 @@ static u8 get_rb_fr_score(){
   */
   max_rb_fr_score = max_rb_fr_score < cur_score ? cur_score : max_rb_fr_score;
   min_rb_fr_score = min_rb_fr_score > cur_score ? cur_score : min_rb_fr_score;
-  if (max_rb_fr_score == min_rb_fr_score) return 50;
-  cur_limit = SCORE_LIMIT + (u8) ( cur_score / (max_rb_fr_score - min_rb_fr_score));
-
-  return cur_limit;
+  if (max_rb_fr_score == min_rb_fr_score) {
+    rb_fr_score = 50;
+  } else {
+    rb_fr_score = (u8)( cur_score / (max_rb_fr_score - min_rb_fr_score));
+  }
 }
 
 
@@ -5951,6 +5961,8 @@ static u8 fuzz_one(char** argv) {
    * PERFORMANCE SCORE *
    *********************/
 
+  get_rb_fr_score();
+
   orig_perf = perf_score = calculate_score(queue_cur);
   /* @RB@ */
   orig_total_execs = total_execs;
@@ -5991,7 +6003,6 @@ re_run: // re-run when running in shadow mode
       orig_branch_mask = alloc_branch_mask(len + 1);
   } else {
       branch_mask = ck_alloc(len + 1);
-      rb_fr_score = get_rb_fr_score();
       orig_branch_mask = ck_alloc(len + 1);
   }
   // this will be used to store the valid modifiable positions
