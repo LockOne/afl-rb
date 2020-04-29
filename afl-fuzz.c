@@ -311,7 +311,7 @@ static u8 func_status = 0;
 static u32 num_rel_func;
 static u32 num_rel_branch;
 static u32* bid_func_map[MAP_SIZE];  //store maximum 10 function idx, +1 on idx to avoid 0
-static u8  rel_branch_map[MAP_SIZE];
+//static u8  rel_branch_map[MAP_SIZE];
 static u32 target_func = -1;
 static u32 mask_size;
 static u32 cur_len;
@@ -321,7 +321,7 @@ static u32 hit_count = 0;
 static double hit_ratio = 0;
 static u32 try_count = 0;
 static u32 func_list_size = 100;
-static double func_rel_threshold = FUNC_REL_THRESHOLD;
+static const double func_rel_threshold = FUNC_REL_THRESHOLD;
 static u8 rb_fr_score = 0;
 static u8 cur_limit = SCORE_LIMIT;
 static double max_rb_fr_score = 0.0;
@@ -5403,7 +5403,34 @@ static u32 calculate_score(struct queue_entry* q) {
 }
 
 static u8 get_rb_fr_score(){
+  //high, the better (0 => never mutate, 100 => mutate all)
+  u32 i,j;
   if (FIX_RB_FR_SCORE) return FIX_RB_FR_SCORE;
+  for (i = 0; i < (num_func / 8 + 1); i ++){
+      func_exec_list[i] = 0;
+  }
+  for (i = 0; i < MAP_SIZE ; i ++){
+    if (unlikely(queue_cur->trace_mini[i >> 3] & (1 << (i & 7)))){
+      for (j = 0 ; j < 10; j ++){
+        u32 fid = bid_func_map[i][j];  // fid is ++ed.
+        if (fid != 0){
+          func_exec_list[(fid - 1) / 8] |= 1 << ((fid - 1) % 8);
+        } else break;
+      }
+    }
+  }
+  u32 num_exec_func = 0;
+  u32 num_exec_rel_func = 0;
+  for (i = 0 ; i < num_func; i ++) {
+    if (func_exec_list[i/8] & (1 << (i % 8))) {
+      if (func_rel_table[i] >= func_rel_threshold) {
+        num_exec_rel_func ++;
+      }
+      num_exec_func ++;
+    }
+  }
+  double cur_score = ((double) num_exec_rel_func) / ((double) num_exec_func);
+  /*
   u32 bm_size = queue_cur->bitmap_size; 
   u32 i;
   hit_count = 0;
@@ -5415,10 +5442,11 @@ static u8 get_rb_fr_score(){
     } 
   }
   double cur_score = ((double) hit_count) / ((double) bm_size);
+  */
   max_rb_fr_score = max_rb_fr_score < cur_score ? cur_score : max_rb_fr_score;
   min_rb_fr_score = min_rb_fr_score > cur_score ? cur_score : min_rb_fr_score;
   if (max_rb_fr_score == min_rb_fr_score) return 50;
-  cur_limit = SCORE_LIMIT + (u8) ( 50 * (max_rb_fr_score - cur_score) / (max_rb_fr_score - min_rb_fr_score));
+  cur_limit = SCORE_LIMIT + (u8) ( cur_score / (max_rb_fr_score - min_rb_fr_score));
 
   return cur_limit;
 }
@@ -5782,7 +5810,7 @@ static u8 fuzz_one(char** argv) {
         num_rel_func = 0;
         num_rel_branch = 0;
         num_target_func = 0;
-        memset(rel_branch_map, 0, MAP_SIZE);
+        //memset(rel_branch_map, 0, MAP_SIZE);
         for ( i = 0; i < 10 ; i ++){
           if(target_funcs[i] == 0) break;
           num_target_func ++;
@@ -5794,17 +5822,21 @@ static u8 fuzz_one(char** argv) {
               double rel = ((double) func_exec_table[target_func][i]) / target_exec;
               func_rel_table[i] = rel;
               num_rel_func += (rel >= func_rel_threshold);
+              /*
               if (rel >= func_rel_threshold){
                 for (j = 0; j < func_list[i]->num_branch; j ++){
                   rel_branch_map[func_list[i]->branch_ids[j]] = 1;
                 }
               }
+              */
             }     
           }
         }
+        /*
         for (i = 0; i < MAP_SIZE; i ++){
           num_rel_branch += rel_branch_map[i];
         }
+        */
       }
     }
   }
@@ -6138,7 +6170,7 @@ skip_simple_bitflip:
   orig_hit_cnt = new_hit_cnt;
 
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
-    if (UR(100) >= rb_fr_score) continue;
+    if (UR(100) <= rb_fr_score) continue;
 
     stage_cur_byte = stage_cur;
 

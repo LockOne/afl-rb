@@ -25,13 +25,13 @@
 
 #define FUNC_REL_THRESHOLD 0.7
 
-#define SCORE_LIMIT 70
+#define SCORE_LIMIT 0
 
 #define TOTAL_TIMEOUT 1000 * 60 * 60 * 24
 
-#define FIX_RB_FR_SCORE 50
+#define FIX_RB_FR_SCORE 0
 
-#define FUNC_REL_SEL 1
+#define FUNC_REL_SEL 0 //not gonna use...
 
 /******************************************************
  *                                                    *
