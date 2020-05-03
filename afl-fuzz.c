@@ -5396,7 +5396,7 @@ static u32 calculate_score(struct queue_entry* q) {
 
   }
 
-  rb_fr_perf = pow(2.0, ((float) (rb_fr_score - 50))/ 10.0);
+  rb_fr_perf = pow(2.0, ((float) (rb_fr_score - 50))/ 50.0);
 
   perf_score = (u32) (((float) perf_score) * rb_fr_perf);
 
