@@ -153,6 +153,7 @@ EXP_ST u8  virgin_bits[MAP_SIZE],     /* Regions yet untouched by fuzzing */
 static u8  var_bytes[MAP_SIZE];       /* Bytes that appear to be variable */
 
 static s32 shm_id;                    /* ID of the SHM region             */
+static s32 func_shm_id;
 
 static volatile u8 stop_soon,         /* Ctrl-C pressed?                  */
                    clear_screen = 1,  /* Window resized?                  */
@@ -319,6 +320,24 @@ static int trim_for_branch = 0;
 static u32 mask_size;
 static FILE * mask_size_file = NULL;
 
+static u8 rb_using = 0;
+
+// even for target, odd for covered
+static u32 * branch_infos = NULL;
+static u32 num_branch_info = 0;
+static u32 branch_info_size = 0;
+
+//Final record table of branch to func 
+static u32 * branch_func_table = NULL; 
+static u64 * bft64 = NULL;
+
+//Shared memory, edge id -> func id
+static u32* branch_func_bits = NULL;
+static u64* bfb64 = NULL;
+
+//func_id -> func_id -> func exec count
+static u32 ** func_exec_table;
+static u8 * func_exec_list;
 
 /* Interesting values, as per config.h */
 
@@ -427,6 +446,47 @@ static void dump_to_logs() {
   ck_write(branch_hit_fd, hit_bits, sizeof(u64) * MAP_SIZE, fn);
   ck_free(fn);
   close(branch_hit_fd);
+
+  fn = alloc_printf("%s/branch_cov.txt", out_dir);
+  s32 fd = open(fn, O_CREAT | O_WRONLY | O_TRUNC, 0600);
+  if (fd < 0) PFATAL("Unable to create '%s'", fn);
+  ck_free(fn);
+  FILE * f = fdopen(fd, "w");
+  int i,j;
+  fprintf(f,"target,covered\n");
+  for (i = 0; i < num_branch_info / 2; i++) {
+    fprintf(f,"%u,%u\n",branch_infos[i * 2], branch_infos[i * 2 + 1]);
+  }
+  fclose(f);
+
+  fn = alloc_printf("%s/func_exec_table.txt", out_dir);
+  fd = open(fn, O_CREAT | O_WRONLY | O_TRUNC, 0600);
+  if (fd < 0) PFATAL("Unable to create '%s'", fn);
+  ck_free(fn);
+  f = fdopen(fd, "w");
+  fprintf(f,",");
+  for (i = 0; i < NUM_FUNC; i++) {
+    fprintf(f,"%d,", i);
+  }
+  fprintf(f,"\n");
+  for (i = 0; i < NUM_FUNC; i++) {
+    fprintf(f, "%d,", i);
+    for(j = 0; j < NUM_FUNC; j++) {
+      fprintf(f, "%u,", func_exec_table[i][j]);
+    }
+    fprintf(f,"\n");
+  }
+  fclose(f);
+
+  fn = alloc_printf("%s/branch_func_table.txt", out_dir);
+  fd = open(fn, O_CREAT | O_WRONLY | O_TRUNC, 0600);
+  if (fd < 0) PFATAL("Unable to create '%s'", fn);
+  ck_free(fn);
+  f = fdopen(fd, "w");
+  for (i = 0; i < MAP_SIZE; i++) {
+    fprintf(f,"%u\n", branch_func_table[i]);
+  }
+  fclose(f);
 }
 
 /* Get unix time in milliseconds */
@@ -1224,6 +1284,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
   u64* virgin  = (u64*)virgin_map;
 
   u32  i = (MAP_SIZE >> 3);
+  u32  j;
 
 #else
 
@@ -1243,8 +1304,9 @@ static inline u8 has_new_bits(u8* virgin_map) {
        almost always be the case. */
 
     if (unlikely(*current) && unlikely(*current & *virgin)) {
+      if (likely(ret < 2)) ret = 1;
 
-      if (likely(ret < 2)) {
+      if (1) { //likely(ret < 2)) {
 
         u8* cur = (u8*)current;
         u8* vir = (u8*)virgin;
@@ -1253,19 +1315,31 @@ static inline u8 has_new_bits(u8* virgin_map) {
            bytes in current[] are pristine in virgin[]. */
 
 #ifdef __x86_64__
-
-        if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
+        if (rb_using) {
+          for (j = 0; j < 8; j++) {
+            if (unlikely(cur[j] && vir[j] == 0xff)) {
+              ret = 2;
+              branch_infos[num_branch_info] = rb_fuzzing - 1;
+              branch_infos[num_branch_info + 1] = i * 8 + j;
+              num_branch_info += 2;
+              if (num_branch_info >= branch_info_size) {
+                branch_info_size += BRANCH_INFO_SIZE;
+                branch_infos = (u32*) realloc(branch_infos, sizeof(u32) * branch_info_size);
+              }
+            }
+          }
+        } else if (ret == 2) {
+          //do nothing
+        } else if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
             (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff) ||
             (cur[4] && vir[4] == 0xff) || (cur[5] && vir[5] == 0xff) ||
-            (cur[6] && vir[6] == 0xff) || (cur[7] && vir[7] == 0xff)) ret = 2;
-        else ret = 1;
-
+            (cur[6] && vir[6] == 0xff) || (cur[7] && vir[7] == 0xff)) {
+              ret = 2;
+        }
 #else
-
         if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
             (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff)) ret = 2;
         else ret = 1;
-
 #endif /* ^__x86_64__ */
 
       }
@@ -1542,6 +1616,7 @@ static inline void classify_counts(u32* mem) {
 static void remove_shm(void) {
 
   shmctl(shm_id, IPC_RMID, NULL);
+  shmctl(func_shm_id, IPC_RMID, NULL);
 
 }
 
@@ -1694,6 +1769,19 @@ EXP_ST void setup_shm(void) {
   trace_bits = shmat(shm_id, NULL, 0);
   
   if (!trace_bits) PFATAL("shmat() failed");
+
+  func_shm_id = shmget(IPC_PRIVATE, MAP_SIZE * sizeof(u32) , IPC_CREAT | IPC_EXCL | 0600);
+
+  if (func_shm_id < 0) PFATAL("shmget() failed");
+  atexit(remove_shm);
+
+  shm_str = alloc_printf("%d", func_shm_id);
+
+  if (!dumb_mode) setenv(SHM_ENV_VAR2, shm_str, 1);
+  ck_free(shm_str);
+  
+  branch_func_bits = shmat(func_shm_id, NULL, 0);
+  bfb64 = (u64*) branch_func_bits;
 
 }
 
@@ -2599,6 +2687,7 @@ static u8 run_target(char** argv, u32 timeout) {
      territory. */
 
   memset(trace_bits, 0, MAP_SIZE);
+  memset(branch_func_bits, 0, MAP_SIZE * sizeof(u32));
   MEM_BARRIER();
 
   /* If we're running in "dumb" mode, we can't rely on the fork server
@@ -3517,10 +3606,43 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
       ck_write(fd, mem, len, fn);
 
       close(fd);
-    } 
+    }
+
+    //TODO: record function relevance
+    //update branch_func_table
+    //update func_exec_table
+    //from branch_func_bits
+
+    int i = 0,j;
+    memset(func_exec_list, 0, NUM_FUNC);
+    while (i < (MAP_SIZE >> 1)) {
+      if (unlikely(bfb64[i])) {
+        u32 * bits = (u32 *) (bfb64 + i);
+        bft64[i] |= bfb64[i];
+        
+        if (bits[0]) {
+          func_exec_list[bits[0]] = 1;
+        }
+
+        if (bits[1]) {
+          func_exec_list[bits[1]] = 1;
+        }
+
+      }
+      i++;
+    }
+
+    for (i = 0 ; i < NUM_FUNC; i++) {
+      if (unlikely(func_exec_list[i])) {
+        for (j = 0; j < NUM_FUNC; j++) {
+          if (unlikely(func_exec_table[j])) {
+            func_exec_table[i][j] += 1;
+          }
+        }
+      }
+    }
 
     keeping = 1;
-
   }
 
   switch (fault) {
@@ -4243,7 +4365,6 @@ static void show_stats(void) {
   /* Check if we're past the 10 minute mark. */
 
   if (cur_ms - start_time > 10 * 60 * 1000) run_over10m = 1;
-  if (cur_ms - start_time > TOTAL_TIMEOUT) stop_soon = 2;
 
   /* Calculate smoothed exec speed stats. */
 
@@ -5429,6 +5550,7 @@ static u8 fuzz_one(char** argv) {
   u32 orig_total_execs = total_execs;
   
   mask_size = 0;
+  rb_using = 0;
 
   if (!vanilla_afl){
     if (prev_cycle_wo_new && bootstrap){
@@ -6035,6 +6157,8 @@ skip_simple_bitflip:
   // @RB@ TODO: skip to havoc (or dictionary add?) if can't modify any bytes 
 
   if (rb_skip_deterministic) goto havoc_stage;
+
+  rb_using = 1;
 
   /* Two walking bits. */
 
@@ -6942,7 +7066,7 @@ skip_extras:
    ****************/
 
 havoc_stage:
-   
+  rb_using = 1;
   stage_cur_byte = -1;
 
   /* The havoc stage mutation code is also invoked when splicing files; if the
@@ -9024,6 +9148,22 @@ int main(int argc, char** argv) {
     if (stop_soon) goto stop_fuzzing;
   }
 
+  branch_infos = (u32 *) malloc (BRANCH_INFO_SIZE * sizeof(u32));
+  branch_info_size = BRANCH_INFO_SIZE;
+
+  func_exec_table = (u32 **) calloc (sizeof(u32*), NUM_FUNC + NUM_FUNC * NUM_FUNC);
+  func_exec_list = (u8*) calloc(sizeof(u8), NUM_FUNC);
+  if (!func_exec_table || !func_exec_list) PFATAL("malloc_failed");
+  u32 * ptr = (u32*) (func_exec_table + NUM_FUNC);
+  u32 i;
+  for (i = 0; i < NUM_FUNC; i++) {
+    func_exec_table[i] = ptr + NUM_FUNC * i;
+  }
+
+  branch_func_table = (u32 *) malloc (MAP_SIZE * sizeof(u32));
+  bft64 = (u64 *) branch_func_table;
+
+
   while (1) {
 
     u8 skipped_fuzz;
@@ -9112,6 +9252,8 @@ stop_fuzzing:
 
   }
 
+
+
   dump_to_logs();
   fclose(plot_file);
   ck_free(blacklist);
@@ -9119,6 +9261,9 @@ stop_fuzzing:
   destroy_extras();
   ck_free(target_path);
   ck_free(sync_id);
+  ck_free(func_exec_table);
+  ck_free(func_exec_list);
+  ck_free(branch_func_table);
   if (mask_size_file) fclose(mask_size_file);
 
   alloc_report();

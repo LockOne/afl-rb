@@ -23,13 +23,14 @@
 
 #define VERSION             "2.52b"
 
-#define TOTAL_TIMEOUT   1000 * 60 * 60 * 24
-
 /******************************************************
  *                                                    *
  *  Settings that may be of interest to power users:  *
  *                                                    *
  ******************************************************/
+
+#define BRANCH_INFO_SIZE    1000
+#define NUM_FUNC            1000
 
 /* Comment out to disable terminal colors (note that this makes afl-analyze
    a lot less nice): */
@@ -267,6 +268,8 @@
 /* Environment variable used to pass SHM ID to the called program. */
 
 #define SHM_ENV_VAR         "__AFL_SHM_ID"
+
+#define SHM_ENV_VAR2         "__AFL_SHM_ID2"
 
 /* Other less interesting, internal-only variables. */
 

@@ -31,6 +31,10 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include <iostream>
+#include <fstream>
+#include <string>
+
 #include "llvm/ADT/Statistic.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -100,15 +104,33 @@ bool AFLCoverage::runOnModule(Module &M) {
       new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
                          GlobalValue::ExternalLinkage, 0, "__afl_area_ptr");
 
+  GlobalVariable *AFLFuncMapPtr =
+      new GlobalVariable(M, PointerType::get(Int32Ty, 0), false,
+                         GlobalValue::ExternalLinkage, 0, "__afl_func_ptr");
+
   GlobalVariable *AFLPrevLoc = new GlobalVariable(
       M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_prev_loc",
+      0, GlobalVariable::GeneralDynamicTLSModel, 0, false);
+
+  GlobalVariable *AFLFuncId =
+      new GlobalVariable(M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_func_id",
       0, GlobalVariable::GeneralDynamicTLSModel, 0, false);
 
   /* Instrument all the things! */
 
   int inst_blocks = 0;
+  int func_id = 0;
 
-  for (auto &F : M)
+  for (auto &F : M) {
+    
+    if (F.size()) {
+      BasicBlock & entryblock = F.getEntryBlock();
+      BasicBlock::iterator eIP = entryblock.getFirstInsertionPt();
+      IRBuilder<> IRB(&(*eIP));
+      IRB.CreateStore(ConstantInt::get(Int32Ty, func_id), AFLFuncId)
+           ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+    }
+    
     for (auto &BB : F) {
 
       BasicBlock::iterator IP = BB.getFirstInsertionPt();
@@ -130,10 +152,13 @@ bool AFLCoverage::runOnModule(Module &M) {
 
       /* Load SHM pointer */
 
+      LoadInst *FuncMapPtr = IRB.CreateLoad(AFLFuncMapPtr);
+      FuncMapPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
       LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
       MapPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-      Value *MapPtrIdx =
-          IRB.CreateGEP(MapPtr, IRB.CreateXor(PrevLocCasted, CurLoc));
+      Value *PtrIdx = IRB.CreateXor(PrevLocCasted, CurLoc);
+      Value *MapPtrIdx = IRB.CreateGEP(MapPtr, PtrIdx);
+      Value *FuncMapPtrIdx = IRB.CreateGEP(FuncMapPtr, PtrIdx);
 
       /* Update bitmap */
 
@@ -141,6 +166,9 @@ bool AFLCoverage::runOnModule(Module &M) {
       Counter->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
       Value *Incr = IRB.CreateAdd(Counter, ConstantInt::get(Int8Ty, 1));
       IRB.CreateStore(Incr, MapPtrIdx)
+          ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+      
+      IRB.CreateStore(IRB.CreateLoad(AFLFuncId), FuncMapPtrIdx)
           ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
 
       /* Set prev_loc to cur_loc >> 1 */
@@ -152,6 +180,12 @@ bool AFLCoverage::runOnModule(Module &M) {
       inst_blocks++;
 
     }
+    func_id ++;
+    if (func_id >= NUM_FUNC) {
+      WARNF("Number of function is higher than the configured size");
+      func_id = 0;
+    }
+  }
 
   /* Say something nice. */
 
