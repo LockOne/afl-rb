@@ -1315,7 +1315,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
            bytes in current[] are pristine in virgin[]. */
 
 #ifdef __x86_64__
-        if (rb_using) {
+        if (rb_using && rb_fuzzing) {
           for (j = 0; j < 8; j++) {
             if (unlikely(cur[j] && vir[j] == 0xff)) {
               ret = 2;
@@ -9261,9 +9261,10 @@ stop_fuzzing:
   destroy_extras();
   ck_free(target_path);
   ck_free(sync_id);
-  ck_free(func_exec_table);
-  ck_free(func_exec_list);
-  ck_free(branch_func_table);
+  if (func_exec_table) free(func_exec_table);
+  if (func_exec_list) free(func_exec_list);
+  if (branch_func_table) free(branch_func_table);
+
   if (mask_size_file) fclose(mask_size_file);
 
   alloc_report();
